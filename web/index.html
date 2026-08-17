@@ -27,6 +27,7 @@
 
       <nav class="nav">
         <a href="#vacancies" class="nav-link active" data-section="vacancies">Вакансии</a>
+        <a href="#agent" class="nav-link" data-section="agent">Агент</a>
         <a href="#news" class="nav-link" data-section="news">IT-новости</a>
         <a href="#sources" class="nav-link">Источники</a>
       </nav>
@@ -49,9 +50,9 @@
 <section class="hero">
   <div class="container">
     <div class="hero-inner">
-      <div class="hero-tag">
+      <div class="hero-tag" id="heroTag">
         <span class="pulse"></span>
-        Обновлено 2 часа назад · 12 источников
+        <span id="heroTagText">Загружаем живые источники…</span>
       </div>
       <h1 class="hero-title">
         Стажировки и <span class="accent">первая работа</span><br>
@@ -59,8 +60,8 @@
         и удалёнка по РФ
       </h1>
       <p class="hero-subtitle">
-        ИИ-дайджест junior-вакансий и стажировок: офисные позиции в Казани и Иннополисе,
-        а также полностью удалённые роли от компаний по всей России.
+        Живые junior-вакансии и стажировки с hh.ru плюс IT-новости из публичных Telegram-каналов.
+        Дубли снимаются, фейковых карточек нет. Дайджест — только в Telegram.
       </p>
 
       <div class="search-wrap">
@@ -96,19 +97,19 @@
   <div class="container">
     <div class="stats-grid">
       <div class="stat">
-        <span class="stat-num" id="statVacancies">247</span>
+        <span class="stat-num" id="statVacancies">0</span>
         <span class="stat-label">вакансий</span>
       </div>
       <div class="stat">
-        <span class="stat-num" id="statInternships">43</span>
+        <span class="stat-num" id="statInternships">0</span>
         <span class="stat-label">стажировок</span>
       </div>
       <div class="stat">
-        <span class="stat-num">18</span>
+        <span class="stat-num" id="statCompanies">0</span>
         <span class="stat-label">компаний</span>
       </div>
       <div class="stat">
-        <span class="stat-num">12</span>
+        <span class="stat-num" id="statSources">5</span>
         <span class="stat-label">источников</span>
       </div>
     </div>
@@ -121,8 +122,8 @@
     <div class="digest-inner">
       <div class="digest-icon">📬</div>
       <div class="digest-text">
-        <strong>Персональный дайджест каждое утро</strong>
-        <span>Выбери направление — и получай только подходящие тебе вакансии</span>
+        <strong>Персональный дайджест в Telegram</strong>
+        <span>После входа через Telegram можно сохранить расписание и получить живую подборку. Email и MAX не подключены.</span>
       </div>
       <button class="btn btn-primary btn-sm" id="digestBannerBtn">Настроить дайджест</button>
     </div>
@@ -209,15 +210,61 @@
       <!-- Rendered by JS -->
     </div>
 
-    <!-- Load more -->
-    <div class="load-more-wrap">
-      <button class="btn btn-outline load-more-btn">
-        Загрузить ещё вакансии
-      </button>
-    </div>
-
   </div>
 </main>
+
+<!-- ===== AI AGENT ===== -->
+<section class="agent-section" id="agent">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title"><span class="agent-badge">AI</span>Карьерный агент</h2>
+        <p class="section-sub">План → поиск на hh.ru → разбор найденных карточек. Без живых вакансий агент не подставляет фейки.</p>
+      </div>
+    </div>
+    <div class="agent-layout">
+      <div class="agent-form-card">
+        <div>
+          <label class="form-label" for="agentRole">Направление</label>
+          <select class="form-input" id="agentRole">
+            <option value="backend">Backend</option>
+            <option value="frontend">Frontend</option>
+            <option value="data">Data / ML</option>
+            <option value="devops">DevOps</option>
+            <option value="mobile">Mobile</option>
+            <option value="qa">QA</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="agentSkills">Навыки</label>
+          <input class="form-input" id="agentSkills" placeholder="Python, SQL, Git">
+        </div>
+        <div>
+          <label class="form-label" for="agentGoals">Цель</label>
+          <input class="form-input" id="agentGoals" placeholder="стажировка в Казани">
+        </div>
+        <button class="btn btn-primary btn-full" id="agentRunBtn" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Запустить агента
+        </button>
+        <div class="agent-steps" id="agentSteps" style="display:none">
+          <div class="agent-step" id="stepPlan"><span class="step-icon">1</span><span class="step-label">PLAN</span><span class="step-status" id="stepPlanStatus">ожидание</span></div>
+          <div class="agent-step-arrow">↓</div>
+          <div class="agent-step" id="stepAct"><span class="step-icon">2</span><span class="step-label">ACT · hh.ru</span><span class="step-status" id="stepActStatus">ожидание</span></div>
+          <div class="agent-step-arrow">↓</div>
+          <div class="agent-step" id="stepVerify"><span class="step-icon">3</span><span class="step-label">VERIFY</span><span class="step-status" id="stepVerifyStatus">ожидание</span></div>
+        </div>
+      </div>
+      <div class="agent-results" id="agentResults" style="display:none">
+        <div class="agent-vacancies" id="agentVacancies"></div>
+        <div class="agent-advice-card">
+          <div class="agent-advice-header">Рекомендации модели</div>
+          <div class="agent-advice-text" id="agentAdviceText"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- ===== IT NEWS ===== -->
 <section class="news-section" id="news">
@@ -225,9 +272,8 @@
     <div class="section-header">
       <div>
         <h2 class="section-title">IT-новости Татарстана</h2>
-        <p class="section-sub">Хакатоны, карьерные события и новости рынка — всё в одном месте</p>
+        <p class="section-sub">Только посты из реально опрашиваемых публичных каналов t.me/s/</p>
       </div>
-      <button class="btn btn-outline btn-sm">Все новости</button>
     </div>
     <div class="news-grid" id="newsGrid">
       <!-- Rendered by JS -->
@@ -239,7 +285,7 @@
 <section class="sources-section" id="sources">
   <div class="container">
     <h2 class="section-title-center">Источники данных</h2>
-    <p class="section-sub-center">Офисные вакансии Татарстана и удалённые позиции по всей России — Telegram-каналы, сайты компаний, hh.ru. Дубли скрываются автоматически</p>
+    <p class="section-sub-center">hh.ru и четыре публичных Telegram-канала. Сайты компаний и неподключённые каналы не показываем. Дубли снимаются на сервере.</p>
     <div class="sources-grid">
       <!-- Rendered by JS -->
     </div>
@@ -270,20 +316,17 @@
         <div class="footer-col">
           <span class="footer-col-title">Сервис</span>
           <a href="#" onclick="openModal('digestModal');return false">Настроить дайджест</a>
-          <a href="#" onclick="openModal('authModal');return false">Регистрация</a>
-          <a href="#">Telegram-бот</a>
+          <a href="#" onclick="openModal('authModal');return false">Войти через Telegram</a>
         </div>
         <div class="footer-col">
           <span class="footer-col-title">Школа 21</span>
-          <a href="https://21-school.ru" target="_blank">Сайт школы</a>
-          <a href="#">Партнёры</a>
-          <a href="#">Контакты</a>
+          <a href="https://21-school.ru" target="_blank" rel="noopener">Сайт школы</a>
         </div>
       </div>
     </div>
     <div class="footer-bottom">
-      <span>© 2025 Карьерный Навигатор 21 · Школа 21</span>
-      <span>Данные обновляются каждые 2 часа</span>
+      <span>© 2026 Карьерный Навигатор 21 · Школа 21</span>
+      <span>Данные с hh.ru и t.me/s/ · без фейковых карточек</span>
     </div>
   </div>
 </footer>
@@ -354,44 +397,35 @@
     </div>
 
     <div class="form-group">
-      <label>Время получения</label>
-      <select class="form-input">
-        <option>09:00 — Утром</option>
-        <option>12:00 — В обед</option>
-        <option>18:00 — Вечером</option>
-        <option>20:00 — Поздним вечером</option>
+      <label for="digestTime">Время (МСК)</label>
+      <select class="form-input" id="digestTime">
+        <option value="09:00">09:00 — Утром</option>
+        <option value="12:00">12:00 — В обед</option>
+        <option value="18:00">18:00 — Вечером</option>
+        <option value="20:00">20:00 — Поздним вечером</option>
       </select>
     </div>
 
     <div class="form-group">
       <label>Направления (выбери несколько)</label>
-      <div class="interest-chips">
-        <button class="chip active">Backend</button>
-        <button class="chip active">Frontend</button>
-        <button class="chip">Data / ML</button>
-        <button class="chip">DevOps</button>
-        <button class="chip">Mobile</button>
-        <button class="chip">QA</button>
-        <button class="chip">PM</button>
-        <button class="chip">Design</button>
+      <div class="interest-chips" id="digestRoles">
+        <button type="button" class="chip active" data-role="backend">Backend</button>
+        <button type="button" class="chip active" data-role="frontend">Frontend</button>
+        <button type="button" class="chip" data-role="data">Data / ML</button>
+        <button type="button" class="chip" data-role="devops">DevOps</button>
+        <button type="button" class="chip" data-role="mobile">Mobile</button>
+        <button type="button" class="chip" data-role="qa">QA</button>
+        <button type="button" class="chip" data-role="pm">PM</button>
+        <button type="button" class="chip" data-role="design">Design</button>
       </div>
     </div>
 
-    <div class="form-group">
-      <label>Куда отправлять</label>
-      <div class="schedule-options">
-        <label class="schedule-option">
-          <input type="checkbox" checked>
-          <span class="schedule-label"><strong>📧 Email</strong></span>
-        </label>
-        <label class="schedule-option">
-          <input type="checkbox">
-          <span class="schedule-label"><strong>✈️ Telegram-бот</strong></span>
-        </label>
-      </div>
-    </div>
-
-    <button class="btn btn-primary btn-full">Сохранить настройки</button>
+    <p class="tg-auth-note" style="max-width:none;text-align:left">
+      Канал один: Telegram. Email и MAX не подключены. После сохранения напишите боту /start — иначе Bot API не доставит сообщение.
+    </p>
+    <p class="tg-auth-hint" id="digestStatus"></p>
+    <button class="btn btn-primary btn-full" id="digestSaveBtn" type="button">Сохранить настройки</button>
+    <button class="btn btn-outline btn-full" id="digestSendBtn" type="button" style="margin-top:8px">Отправить дайджест сейчас</button>
   </div>
 </div>
 

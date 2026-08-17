@@ -1,21 +1,38 @@
+# Public demo on the shared VPS:
+#   host port 8083  →  nginx 8083  →  uvicorn :8000
+#   directory on the server: /opt/tatarsan/school21
+# Do not bind 80/443 from this compose file.
+
 services:
   app:
     build: .
-    restart: always
-    expose:
-      - "8000"
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      - PYTHONDONTWRITEBYTECODE=1
-      - PYTHONUNBUFFERED=1
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      DIGEST_STORE_PATH: /app/data/digest_settings.json
+    volumes:
+      - digest-data:/app/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   nginx:
     image: nginx:alpine
-    restart: always
+    restart: unless-stopped
     ports:
-      - "80:80"
+      - "8083:8083"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - app
+
+volumes:
+  digest-data:

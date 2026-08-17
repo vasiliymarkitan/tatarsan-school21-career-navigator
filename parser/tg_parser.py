@@ -10,10 +10,15 @@ from datetime import datetime, timezone
 import httpx
 from bs4 import BeautifulSoup
 
+from parser.dedup import dedup_news
+
 logger = logging.getLogger(__name__)
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; career-navigator-bot/1.0)",
+    "User-Agent": (
+        "CareerNavigator21/1.0 "
+        "(+https://github.com/vasiliymarkitan/tatarsan-school21-career-navigator)"
+    ),
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
@@ -179,6 +184,6 @@ async def fetch_tg_news() -> list[dict]:
         except Exception as e:
             logger.warning("Parse error for %s: %s", handle, e)
 
-    # Сортируем по дате (свежее сначала)
+    all_news = dedup_news(all_news)
     all_news.sort(key=lambda x: x.get("dateSort", 99))
     return all_news[:20]
