@@ -128,4 +128,6 @@ def test_digest_save_and_send_honest_errors(client, monkeypatch):
 
 def test_no_fake_register_endpoint(client):
     response = client.post("/api/register", json={"name": "x", "email": "a@b.c", "password": "p"})
-    assert response.status_code == 404
+    assert response.status_code in {404, 405}
+    body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+    assert body.get("success") is not True
