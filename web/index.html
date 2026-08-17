@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ИИ-дайджест стажировок и junior-вакансий для IT-специалистов Татарстана: офис в Казани и Иннополисе, а также полная удалёнка по всей России.">
+  <title>Карьерный Навигатор 21 — IT-возможности Татарстана</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2300D97E'/><text x='16' y='22' text-anchor='middle' font-family='monospace' font-weight='900' font-size='16' fill='%23000'>21</text></svg>">
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="header" id="header">
+  <div class="container">
+    <div class="header-inner">
+      <a href="/" class="logo">
+        <div class="logo-badge">21</div>
+        <div class="logo-text">
+          <span class="logo-title">Карьерный Навигатор</span>
+          <span class="logo-sub">Татарстан · Remote по РФ</span>
+        </div>
+      </a>
+
+      <nav class="nav">
+        <a href="#vacancies" class="nav-link active" data-section="vacancies">Вакансии</a>
+        <a href="#news" class="nav-link" data-section="news">IT-новости</a>
+        <a href="#sources" class="nav-link">Источники</a>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn btn-outline btn-sm" id="digestBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Дайджест
+        </button>
+        <button class="btn btn-primary btn-sm" id="loginBtn">Войти</button>
+        <button class="burger" id="burger" aria-label="Открыть меню">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ===== HERO ===== -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-inner">
+      <div class="hero-tag">
+        <span class="pulse"></span>
+        Обновлено 2 часа назад · 12 источников
+      </div>
+      <h1 class="hero-title">
+        Стажировки и <span class="accent">первая работа</span><br>
+        в IT — Татарстан<br>
+        и удалёнка по РФ
+      </h1>
+      <p class="hero-subtitle">
+        ИИ-дайджест junior-вакансий и стажировок: офисные позиции в Казани и Иннополисе,
+        а также полностью удалённые роли от компаний по всей России.
+      </p>
+
+      <div class="search-wrap">
+        <div class="search-box">
+          <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input
+            type="text"
+            class="search-input"
+            id="searchInput"
+            placeholder="Найти: Python, React, DevOps, стажировка..."
+            autocomplete="off"
+          >
+          <button class="search-btn">Найти</button>
+        </div>
+      </div>
+
+      <div class="quick-tags">
+        <button class="quick-tag" data-role="backend">Backend</button>
+        <button class="quick-tag" data-role="frontend">Frontend</button>
+        <button class="quick-tag" data-role="data">Data / ML</button>
+        <button class="quick-tag" data-role="devops">DevOps</button>
+        <button class="quick-tag" data-role="mobile">Mobile</button>
+        <button class="quick-tag" data-role="qa">QA</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== STATS ===== -->
+<section class="stats">
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat">
+        <span class="stat-num" id="statVacancies">247</span>
+        <span class="stat-label">вакансий</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num" id="statInternships">43</span>
+        <span class="stat-label">стажировок</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">18</span>
+        <span class="stat-label">компаний</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">12</span>
+        <span class="stat-label">источников</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== DIGEST BANNER ===== -->
+<section class="digest-banner">
+  <div class="container">
+    <div class="digest-inner">
+      <div class="digest-icon">📬</div>
+      <div class="digest-text">
+        <strong>Персональный дайджест каждое утро</strong>
+        <span>Выбери направление — и получай только подходящие тебе вакансии</span>
+      </div>
+      <button class="btn btn-primary btn-sm" id="digestBannerBtn">Настроить дайджест</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== MAIN CONTENT ===== -->
+<main class="main" id="vacancies">
+  <div class="container">
+
+    <!-- Filters -->
+    <div class="filters">
+      <!-- Category tabs -->
+      <div class="tabs">
+        <button class="tab active" data-filter="category" data-value="all">
+          Все <span class="tab-count" id="countAll">0</span>
+        </button>
+        <button class="tab" data-filter="category" data-value="vacancy">
+          Вакансии <span class="tab-count" id="countVacancies">0</span>
+        </button>
+        <button class="tab" data-filter="category" data-value="internship">
+          Стажировки <span class="tab-count" id="countInternships">0</span>
+        </button>
+      </div>
+
+      <!-- Role filter -->
+      <div class="filter-row">
+        <span class="filter-label">Роль</span>
+        <div class="filter-chips">
+          <button class="chip active" data-filter="role" data-value="all">Все</button>
+          <button class="chip" data-filter="role" data-value="backend">Backend</button>
+          <button class="chip" data-filter="role" data-value="frontend">Frontend</button>
+          <button class="chip" data-filter="role" data-value="data">Data / ML</button>
+          <button class="chip" data-filter="role" data-value="mobile">Mobile</button>
+          <button class="chip" data-filter="role" data-value="devops">DevOps</button>
+          <button class="chip" data-filter="role" data-value="qa">QA</button>
+          <button class="chip" data-filter="role" data-value="pm">PM</button>
+          <button class="chip" data-filter="role" data-value="analytics">Analytics</button>
+          <button class="chip" data-filter="role" data-value="design">Design</button>
+        </div>
+      </div>
+
+      <!-- Format filter -->
+      <div class="filter-row">
+        <span class="filter-label">Формат</span>
+        <div class="filter-chips">
+          <button class="chip active" data-filter="format" data-value="all">Любой</button>
+          <button class="chip" data-filter="format" data-value="remote">🌐 Remote</button>
+          <button class="chip" data-filter="format" data-value="hybrid">⚡ Hybrid</button>
+          <button class="chip" data-filter="format" data-value="office">🏢 Office</button>
+        </div>
+      </div>
+
+      <!-- Location + Sort -->
+      <div class="filter-row filter-row-meta">
+        <div class="filter-chips">
+          <button class="chip active" data-filter="location" data-value="all">Все регионы</button>
+          <button class="chip" data-filter="location" data-value="Казань">Казань</button>
+          <button class="chip" data-filter="location" data-value="Иннополис">Иннополис</button>
+          <button class="chip" data-filter="location" data-value="Альметьевск">Альметьевск</button>
+          <button class="chip" data-filter="format" data-value="remote">🌐 Только Remote</button>
+        </div>
+        <div class="sort-select-wrap">
+          <select class="sort-select" id="sortSelect">
+            <option value="date">По дате</option>
+            <option value="salary">По зарплате</option>
+            <option value="company">По компании</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results info -->
+    <div class="results-info">
+      <span id="resultsCount">Загружаем...</span>
+      <button class="ai-digest-btn" id="aiDigestBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        Подборка для меня
+      </button>
+    </div>
+
+    <!-- Cards -->
+    <div class="cards-grid" id="cardsGrid">
+      <!-- Rendered by JS -->
+    </div>
+
+    <!-- Load more -->
+    <div class="load-more-wrap">
+      <button class="btn btn-outline load-more-btn">
+        Загрузить ещё вакансии
+      </button>
+    </div>
+
+  </div>
+</main>
+
+<!-- ===== IT NEWS ===== -->
+<section class="news-section" id="news">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">IT-новости Татарстана</h2>
+        <p class="section-sub">Хакатоны, карьерные события и новости рынка — всё в одном месте</p>
+      </div>
+      <button class="btn btn-outline btn-sm">Все новости</button>
+    </div>
+    <div class="news-grid" id="newsGrid">
+      <!-- Rendered by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- ===== SOURCES ===== -->
+<section class="sources-section" id="sources">
+  <div class="container">
+    <h2 class="section-title-center">Источники данных</h2>
+    <p class="section-sub-center">Офисные вакансии Татарстана и удалённые позиции по всей России — Telegram-каналы, сайты компаний, hh.ru. Дубли скрываются автоматически</p>
+    <div class="sources-grid">
+      <!-- Rendered by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="/" class="logo">
+          <div class="logo-badge">21</div>
+          <div class="logo-text">
+            <span class="logo-title">Карьерный Навигатор</span>
+          </div>
+        </a>
+        <p class="footer-desc">ИИ-дайджест junior-вакансий и стажировок: офис в Татарстане и удалёнка по всей России</p>
+      </div>
+      <div class="footer-links">
+        <div class="footer-col">
+          <span class="footer-col-title">Разделы</span>
+          <a href="#vacancies">Вакансии</a>
+          <a href="#vacancies">Стажировки</a>
+          <a href="#news">IT-новости</a>
+          <a href="#sources">Источники</a>
+        </div>
+        <div class="footer-col">
+          <span class="footer-col-title">Сервис</span>
+          <a href="#" onclick="openModal('digestModal');return false">Настроить дайджест</a>
+          <a href="#" onclick="openModal('authModal');return false">Регистрация</a>
+          <a href="#">Telegram-бот</a>
+        </div>
+        <div class="footer-col">
+          <span class="footer-col-title">Школа 21</span>
+          <a href="https://21-school.ru" target="_blank">Сайт школы</a>
+          <a href="#">Партнёры</a>
+          <a href="#">Контакты</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2025 Карьерный Навигатор 21 · Школа 21</span>
+      <span>Данные обновляются каждые 2 часа</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ===== MODAL: AUTH ===== -->
+<div class="modal-overlay" id="authModal">
+  <div class="modal">
+    <button class="modal-close" id="authClose">×</button>
+
+    <div class="tg-auth-wrap">
+      <div class="tg-auth-logo">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <rect width="48" height="48" rx="12" fill="#00D97E"/>
+          <text x="24" y="32" text-anchor="middle" font-family="monospace" font-weight="900" font-size="20" fill="#000">21</text>
+        </svg>
+      </div>
+      <h3 class="modal-title">Карьерный Навигатор 21</h3>
+      <p class="modal-sub">Войди через Telegram, чтобы получать персональный дайджест вакансий</p>
+
+      <div id="telegramWidgetContainer" class="tg-widget-container"></div>
+
+      <div id="tgAuthLoading" class="tg-auth-hint">
+        <span class="tg-auth-spinner"></span> Загрузка виджета…
+      </div>
+      <div id="tgAuthDisabled" class="tg-auth-hint" style="display:none">
+        ⚠️ Telegram-авторизация не настроена
+      </div>
+
+      <p class="tg-auth-note">
+        Мы получим только имя и фото из Telegram. Никаких паролей.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: DIGEST ===== -->
+<div class="modal-overlay" id="digestModal">
+  <div class="modal">
+    <button class="modal-close" id="digestClose">×</button>
+    <h3 class="modal-title">📬 Настройка дайджеста</h3>
+    <p class="modal-sub">Выбери, как часто и что получать</p>
+
+    <div class="form-group">
+      <label>Расписание</label>
+      <div class="schedule-options">
+        <label class="schedule-option">
+          <input type="radio" name="schedule" value="daily" checked>
+          <span class="schedule-label">
+            <strong>Ежедневно</strong>
+            <small>Каждый день в выбранное время</small>
+          </span>
+        </label>
+        <label class="schedule-option">
+          <input type="radio" name="schedule" value="weekdays">
+          <span class="schedule-label">
+            <strong>По будням (Пн–Пт)</strong>
+            <small>Только рабочие дни</small>
+          </span>
+        </label>
+        <label class="schedule-option">
+          <input type="radio" name="schedule" value="twice">
+          <span class="schedule-label">
+            <strong>2 раза в неделю</strong>
+            <small>Вторник и пятница</small>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Время получения</label>
+      <select class="form-input">
+        <option>09:00 — Утром</option>
+        <option>12:00 — В обед</option>
+        <option>18:00 — Вечером</option>
+        <option>20:00 — Поздним вечером</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Направления (выбери несколько)</label>
+      <div class="interest-chips">
+        <button class="chip active">Backend</button>
+        <button class="chip active">Frontend</button>
+        <button class="chip">Data / ML</button>
+        <button class="chip">DevOps</button>
+        <button class="chip">Mobile</button>
+        <button class="chip">QA</button>
+        <button class="chip">PM</button>
+        <button class="chip">Design</button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Куда отправлять</label>
+      <div class="schedule-options">
+        <label class="schedule-option">
+          <input type="checkbox" checked>
+          <span class="schedule-label"><strong>📧 Email</strong></span>
+        </label>
+        <label class="schedule-option">
+          <input type="checkbox">
+          <span class="schedule-label"><strong>✈️ Telegram-бот</strong></span>
+        </label>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full">Сохранить настройки</button>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
