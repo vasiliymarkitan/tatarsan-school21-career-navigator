@@ -2,6 +2,7 @@
 Парсер вакансий с hh.ru через публичный API (без токена).
 Документация: https://api.hh.ru/openapi/redoc
 """
+import os
 import re
 import asyncio
 import logging
@@ -10,14 +11,29 @@ from typing import Optional
 
 import httpx
 
+from parser.dedup import dedup_vacancies
+
 logger = logging.getLogger(__name__)
 
 HH_API = "https://api.hh.ru/vacancies"
-HEADERS = {
-    "User-Agent": "career-navigator-21school/1.0 (alina251201@gmail.com)",
-    "HH-User-Agent": "career-navigator-21school/1.0 (alina251201@gmail.com)",
-    "Accept-Language": "ru-RU,ru;q=0.9",
-}
+
+# Contact must not leak a personal mailbox. Override via HH_USER_AGENT if hh.ru asks for one.
+DEFAULT_UA = (
+    "CareerNavigator21/1.0 "
+    "(+https://github.com/vasiliymarkitan/tatarsan-school21-career-navigator)"
+)
+
+
+def request_headers() -> dict[str, str]:
+    ua = (os.getenv("HH_USER_AGENT") or DEFAULT_UA).strip()
+    return {
+        "User-Agent": ua,
+        "HH-User-Agent": ua,
+        "Accept-Language": "ru-RU,ru;q=0.9",
+    }
+
+
+HEADERS = request_headers()
 
 # Поисковые запросы: Татарстан + удалённая Россия
 SEARCHES = [
@@ -139,7 +155,6 @@ def _map_vacancy(item: dict, idx: int) -> dict:
     title = item.get("name", "")
     employer = item.get("employer", {})
     company = employer.get("name", "Компания")
-    employer_id = employer.get("id", "")
     area = item.get("area", {}).get("name", "Россия")
     published_at = item.get("published_at", "")
     salary = _format_salary(item.get("salary"))
@@ -155,13 +170,9 @@ def _map_vacancy(item: dict, idx: int) -> dict:
     summary = _generate_summary(title, company, snippet)
     logo, logo_color, logo_text = _make_logo(company, idx)
 
-    # Ссылка на страницу компании на hh.ru (если есть employer_id), иначе на вакансию
-    if employer_id:
-        source_url = f"https://hh.ru/employer/{employer_id}"
-        card_url = f"https://hh.ru/employer/{employer_id}"
-    else:
-        card_url = item.get("alternate_url", "#")
-        source_url = "https://hh.ru"
+    # Карточка ведёт на саму вакансию, не на витрину работодателя.
+    card_url = item.get("alternate_url") or (f"https://hh.ru/vacancy/{item.get('id')}" if item.get("id") else "")
+    source_url = card_url or "https://hh.ru"
 
     tags = [
         "стажировка" if category == "internship" else "junior",
@@ -214,7 +225,7 @@ async def fetch_vacancies_by_query(
     if schedule:
         params["schedule"] = schedule
 
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+    async with httpx.AsyncClient(headers=request_headers(), timeout=15) as client:
         try:
             resp = await client.get(HH_API, params=params)
         except Exception as e:
@@ -240,7 +251,7 @@ async def fetch_hh_vacancies() -> list[dict]:
     results: list[dict] = []
     idx = 0
 
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+    async with httpx.AsyncClient(headers=request_headers(), timeout=15) as client:
         tasks = [client.get(HH_API, params=s) for s in SEARCHES]
         responses = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -263,5 +274,6 @@ async def fetch_hh_vacancies() -> list[dict]:
             except Exception as e:
                 logger.warning("Failed to map vacancy %s: %s", hh_id, e)
 
-    logger.info("hh.ru: fetched %d vacancies", len(results))
+    results = dedup_vacancies(results)
+    logger.info("hh.ru: fetched %d vacancies after dedup", len(results))
     return results

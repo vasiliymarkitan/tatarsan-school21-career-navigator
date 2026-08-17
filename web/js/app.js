@@ -1,4 +1,3 @@
-// ===== STATE =====
 const state = {
   category: 'all',
   role: 'all',
@@ -8,25 +7,37 @@ const state = {
   sort: 'date'
 };
 
-// ===== FILTER & RENDER =====
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function salaryValue(salary) {
+  if (!salary) return -1;
+  const digits = String(salary).replace(/[^\d]/g, '');
+  return digits ? parseInt(digits, 10) : -1;
+}
+
 function filterVacancies() {
   return VACANCIES.filter(v => {
-    // дедупликация: скрываем hh.ru-вакансию, если компания уже есть в прямых источниках
-    if (v.source.type === 'hh' && DIRECT_SOURCE_ROLE_KEYS.has(v.company.toLowerCase() + '::' + v.role)) return false;
-
     if (state.category !== 'all' && v.category !== state.category) return false;
     if (state.role !== 'all' && v.role !== state.role) return false;
     if (state.format !== 'all' && v.format !== state.format) return false;
     if (state.location !== 'all' && v.location !== state.location) return false;
     if (state.query) {
       const q = state.query.toLowerCase();
-      const haystack = [v.title, v.company, ...v.tags, v.aiSummary].join(' ').toLowerCase();
+      const haystack = [v.title, v.company, ...(v.tags || []), v.aiSummary].join(' ').toLowerCase();
       if (!haystack.includes(q)) return false;
     }
     return true;
   }).sort((a, b) => {
-    if (state.sort === 'date') return a.dateSort - b.dateSort;
-    if (state.sort === 'company') return a.company.localeCompare(b.company, 'ru');
+    if (state.sort === 'date') return (a.dateSort ?? 99) - (b.dateSort ?? 99);
+    if (state.sort === 'company') return String(a.company || '').localeCompare(String(b.company || ''), 'ru');
+    if (state.sort === 'salary') return salaryValue(b.salary) - salaryValue(a.salary);
     return 0;
   });
 }
@@ -46,57 +57,57 @@ function renderSourceBadge(source) {
     icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
   }
 
-  return `<a href="${source.url}" target="_blank" rel="noopener" class="source-badge ${cls}" title="Открыть источник">${icon}${source.name}</a>`;
+  return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener" class="source-badge ${cls}" title="Открыть источник">${icon}${escapeHtml(source.name)}</a>`;
 }
 
 function renderTag(tag) {
   let cls = 'tag';
-  const t = tag.toLowerCase();
+  const t = String(tag).toLowerCase();
   if (t === 'стажировка') cls += ' type-internship';
   else if (t === 'junior') cls += ' type-junior';
   else if (t === 'remote') cls += ' format-remote';
   else if (t === 'hybrid') cls += ' format-hybrid';
-  return `<span class="${cls}">${tag}</span>`;
+  return `<span class="${cls}">${escapeHtml(tag)}</span>`;
 }
 
 function renderCard(v) {
   return `
-    <article class="card" data-id="${v.id}">
+    <article class="card" data-id="${escapeHtml(v.id)}">
       <div class="card-header">
         <div class="card-company">
-          <div class="company-logo" style="background:${v.logoColor};color:${v.logoText}">${v.logo}</div>
+          <div class="company-logo" style="background:${escapeHtml(v.logoColor)};color:${escapeHtml(v.logoText)}">${escapeHtml(v.logo)}</div>
           <div>
-            <div class="company-name">${v.company}</div>
+            <div class="company-name">${escapeHtml(v.company)}</div>
             <div class="company-location">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="opacity:.5;vertical-align:middle;margin-right:2px"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-              ${v.location}
+              ${escapeHtml(v.location)}
             </div>
           </div>
         </div>
         <div class="card-meta">
-          ${renderSourceBadge(v.source)}
-          <div class="card-date">${v.dateLabel}</div>
+          ${renderSourceBadge(v.source || {})}
+          <div class="card-date">${escapeHtml(v.dateLabel)}</div>
         </div>
       </div>
 
-      <h3 class="card-title">${v.title}</h3>
+      <h3 class="card-title">${escapeHtml(v.title)}</h3>
 
       <div class="ai-summary">
         <div class="ai-summary-header">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-          ИИ-саммари
+          ${v.aiEnriched ? 'ИИ-саммари' : 'Кратко из источника'}
         </div>
-        <div class="ai-summary-text">${v.aiSummary}</div>
+        <div class="ai-summary-text">${escapeHtml(v.aiSummary)}</div>
       </div>
 
       <div class="card-tags">
-        ${v.tags.map(renderTag).join('')}
+        ${(v.tags || []).map(renderTag).join('')}
       </div>
 
       <div class="card-footer">
-        <div class="card-salary">${v.salary}</div>
-        <a href="${v.url}" class="card-apply" target="_blank">
-          ${v.source.type === 'hh' ? 'На hh.ru' : 'Подробнее'}
+        <div class="card-salary">${escapeHtml(v.salary || 'зарплата не указана')}</div>
+        <a href="${escapeHtml(v.url)}" class="card-apply" target="_blank" rel="noopener">
+          ${v.source && v.source.type === 'hh' ? 'На hh.ru' : 'Подробнее'}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
       </div>
@@ -113,17 +124,14 @@ function renderVacancies() {
     grid.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
-        <div class="empty-title">Ничего не найдено</div>
-        <div class="empty-sub">Попробуй изменить фильтры или поисковый запрос</div>
+        <div class="empty-title">${VACANCIES.length ? 'Ничего не найдено' : 'Живых вакансий пока нет'}</div>
+        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Фейковые карточки не подставляем. Обновите страницу после парсинга hh.ru.'}</div>
       </div>`;
   } else {
     grid.innerHTML = filtered.map(renderCard).join('');
   }
 
-  const total = filtered.length;
-  countEl.textContent = `Найдено: ${total} ${declVacancy(total)}`;
-
-  // update tab counts
+  countEl.textContent = `Найдено: ${filtered.length} ${declVacancy(filtered.length)}`;
   document.getElementById('countAll').textContent = VACANCIES.length;
   document.getElementById('countVacancies').textContent = VACANCIES.filter(v => v.category === 'vacancy').length;
   document.getElementById('countInternships').textContent = VACANCIES.filter(v => v.category === 'internship').length;
@@ -131,62 +139,64 @@ function renderVacancies() {
 
 function declVacancy(n) {
   if (n % 10 === 1 && n % 100 !== 11) return 'результат';
-  if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'результата';
+  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'результата';
   return 'результатов';
 }
 
-// ===== NEWS =====
 function renderNews() {
   const grid = document.getElementById('newsGrid');
+  if (!NEWS.length) {
+    grid.innerHTML = `
+      <article class="news-card">
+        <h3 class="news-title">Новостей из Telegram пока нет</h3>
+        <p class="news-summary">Показываем только посты с t.me/s/kazanit, it_tatarstan, innopolis_live и school21_kazan. Статику не подмешиваем.</p>
+      </article>`;
+    return;
+  }
   grid.innerHTML = NEWS.map(n => `
     <article class="news-card">
       <div class="news-card-header">
-        <div class="news-icon">${n.icon}</div>
-        <h3 class="news-title">${n.title}</h3>
+        <div class="news-icon">${escapeHtml(n.icon || '💬')}</div>
+        <h3 class="news-title">${escapeHtml(n.title)}</h3>
       </div>
-      <p class="news-summary">${n.summary}</p>
+      <p class="news-summary">${escapeHtml(n.summary)}</p>
       <div class="news-footer">
         <div class="news-meta">
-          <span class="news-source ${n.sourceType}">${n.source}</span>
-          <span class="news-date">${n.dateLabel}</span>
+          <a class="news-source ${escapeHtml(n.sourceType || 'telegram')}" href="${escapeHtml(n.url || '#')}" target="_blank" rel="noopener">${escapeHtml(n.source)}</a>
+          <span class="news-date">${escapeHtml(n.dateLabel)}</span>
         </div>
         <div class="news-tags">
-          ${n.tags.map(t => `<span class="news-tag">${t}</span>`).join('')}
+          ${(n.tags || []).map(t => `<span class="news-tag">${escapeHtml(t)}</span>`).join('')}
         </div>
       </div>
     </article>
   `).join('');
 }
 
-// ===== SOURCES =====
-function renderSources() {
+function renderSources(list) {
   const grid = document.querySelector('.sources-grid');
   if (!grid) return;
-  grid.innerHTML = SOURCES.map(s => `
+  const items = list && list.length ? list : SOURCES;
+  grid.innerHTML = items.map(s => `
     <div class="source-item">
-      <div class="source-icon ${s.type}">${s.type === 'telegram' ? 'TG' : 'WEB'}</div>
-      <span>${s.name}</span>
+      <div class="source-icon ${escapeHtml(s.type)}">${s.type === 'telegram' ? 'TG' : 'HH'}</div>
+      <span>${escapeHtml(s.name)}</span>
     </div>
   `).join('');
 }
 
-// ===== FILTERS =====
 function initFilters() {
   document.querySelectorAll('[data-filter]').forEach(btn => {
     btn.addEventListener('click', () => {
       const filter = btn.dataset.filter;
       const value = btn.dataset.value;
-
-      // deactivate siblings
       document.querySelectorAll(`[data-filter="${filter}"]`).forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
       state[filter] = value;
       renderVacancies();
     });
   });
 
-  // Quick tags in hero
   document.querySelectorAll('.quick-tag').forEach(btn => {
     btn.addEventListener('click', () => {
       const role = btn.dataset.role;
@@ -199,14 +209,12 @@ function initFilters() {
     });
   });
 
-  // Sort
   document.getElementById('sortSelect').addEventListener('change', e => {
     state.sort = e.target.value;
     renderVacancies();
   });
 }
 
-// ===== SEARCH =====
 let searchTimer;
 function initSearch() {
   const input = document.getElementById('searchInput');
@@ -233,7 +241,6 @@ function initSearch() {
   });
 }
 
-// ===== MODALS =====
 function openModal(id) {
   document.getElementById(id).classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -244,52 +251,104 @@ function closeModal(id) {
 }
 
 function initModals() {
-  // Auth modal — открывать только если не залогинен
   document.getElementById('loginBtn').addEventListener('click', () => {
     if (!_currentUser) openModal('authModal');
   });
   document.getElementById('authClose').addEventListener('click', () => closeModal('authModal'));
 
-  // Digest modals
   ['digestBtn', 'digestBannerBtn', 'aiDigestBtn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', () => openModal('digestModal'));
   });
   document.getElementById('digestClose').addEventListener('click', () => closeModal('digestModal'));
 
-  // Close on overlay click
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', e => {
       if (e.target === overlay) closeModal(overlay.id);
     });
   });
 
-  // Modal tabs (auth)
-  document.querySelectorAll('.modal-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const target = tab.dataset.tab;
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.modal-content').forEach(c => c.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById(target + 'Form').classList.add('active');
-    });
-  });
-
-  // Interest chips in modal (toggle)
-  document.querySelectorAll('.interest-chips .chip').forEach(chip => {
+  document.querySelectorAll('#digestRoles .chip').forEach(chip => {
     chip.addEventListener('click', () => chip.classList.toggle('active'));
   });
 
-  // Schedule options
   document.querySelectorAll('.schedule-option input[type="radio"]').forEach(radio => {
     radio.addEventListener('change', () => {
-      document.querySelectorAll('.schedule-option').forEach(opt => opt.style.borderColor = '');
+      document.querySelectorAll('.schedule-option').forEach(opt => { opt.style.borderColor = ''; });
       if (radio.checked) radio.closest('.schedule-option').style.borderColor = 'var(--accent)';
     });
   });
+
+  const saveBtn = document.getElementById('digestSaveBtn');
+  const sendBtn = document.getElementById('digestSendBtn');
+  if (saveBtn) saveBtn.addEventListener('click', saveDigestSettings);
+  if (sendBtn) sendBtn.addEventListener('click', sendDigestNow);
 }
 
-// ===== BURGER MENU =====
+function selectedDigestRoles() {
+  return [...document.querySelectorAll('#digestRoles .chip.active')]
+    .map(chip => chip.dataset.role)
+    .filter(Boolean);
+}
+
+function setDigestStatus(text, isError) {
+  const el = document.getElementById('digestStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? '#f87171' : 'var(--text2)';
+}
+
+async function saveDigestSettings() {
+  if (!_currentUser) {
+    closeModal('digestModal');
+    openModal('authModal');
+    return;
+  }
+  const schedule = (document.querySelector('input[name="schedule"]:checked') || {}).value || 'daily';
+  const time = document.getElementById('digestTime').value;
+  const roles = selectedDigestRoles();
+  if (!roles.length) {
+    setDigestStatus('Выберите хотя бы одно направление', true);
+    return;
+  }
+  setDigestStatus('Сохраняем…');
+  try {
+    const res = await fetch('/api/digest/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule, time, roles }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      setDigestStatus(data.error || 'Не удалось сохранить', true);
+      return;
+    }
+    setDigestStatus(data.message || 'Сохранено');
+  } catch (err) {
+    setDigestStatus('Сервер недоступен', true);
+  }
+}
+
+async function sendDigestNow() {
+  if (!_currentUser) {
+    closeModal('digestModal');
+    openModal('authModal');
+    return;
+  }
+  setDigestStatus('Отправляем в Telegram…');
+  try {
+    const res = await fetch('/api/digest/send', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      setDigestStatus(data.error || 'Не удалось отправить', true);
+      return;
+    }
+    setDigestStatus(data.empty ? 'Отправлено: в кэше сейчас пусто, так и написали.' : (data.message || 'Отправлено'));
+  } catch (err) {
+    setDigestStatus('Сервер недоступен', true);
+  }
+}
+
 function initBurger() {
   const burger = document.getElementById('burger');
   let mobileNav = document.getElementById('mobileNav');
@@ -300,6 +359,7 @@ function initBurger() {
     mobileNav.id = 'mobileNav';
     mobileNav.innerHTML = `
       <a href="#vacancies" class="nav-link" onclick="closeMobileNav()">Вакансии</a>
+      <a href="#agent" class="nav-link" onclick="closeMobileNav()">Агент</a>
       <a href="#" class="nav-link" onclick="openModal('digestModal');closeMobileNav()">Дайджест</a>
       <a href="#news" class="nav-link" onclick="closeMobileNav()">IT-новости</a>
       <hr style="border-color:var(--border);margin:8px 0">
@@ -315,7 +375,6 @@ function initBurger() {
   window.closeMobileNav = () => mobileNav.classList.remove('open');
 }
 
-// ===== HEADER SCROLL =====
 function initHeaderScroll() {
   const header = document.getElementById('header');
   window.addEventListener('scroll', () => {
@@ -323,11 +382,9 @@ function initHeaderScroll() {
   }, { passive: true });
 }
 
-// ===== NAV ACTIVE =====
 function initNavHighlight() {
-  const sections = ['vacancies', 'news'];
+  const sections = ['vacancies', 'news', 'agent'];
   const navLinks = document.querySelectorAll('.nav-link[data-section]');
-
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
@@ -335,15 +392,14 @@ function initNavHighlight() {
       }
     });
   }, { threshold: 0.3 });
-
   sections.forEach(id => {
     const el = document.getElementById(id);
     if (el) observer.observe(el);
   });
 }
 
-// ===== COUNTER ANIMATION =====
 function animateCounter(el, target, duration = 1200) {
+  if (!el) return;
   let start = 0;
   const step = timestamp => {
     if (!start) start = timestamp;
@@ -357,53 +413,27 @@ function animateCounter(el, target, duration = 1200) {
 }
 
 function initCounters() {
-  // считаем из реальных данных (с учётом дедупликации hh.ru)
-  const visible = VACANCIES.filter(v =>
-    !(v.source.type === 'hh' && DIRECT_SOURCE_ROLE_KEYS.has(v.company.toLowerCase() + '::' + v.role))
-  );
-  const vacancyCount = visible.filter(v => v.category === 'vacancy').length;
-  const internshipCount = visible.filter(v => v.category === 'internship').length;
-  const companyCount = new Set(visible.map(v => v.company)).size;
-  const sourceCount = new Set(visible.map(v => v.source.name)).size;
+  const vacancyCount = VACANCIES.filter(v => v.category === 'vacancy').length;
+  const internshipCount = VACANCIES.filter(v => v.category === 'internship').length;
+  const companyCount = new Set(VACANCIES.map(v => v.company)).size;
+  const sourceCount = SOURCES.length;
 
-  // обновляем статику сразу, потом анимируем
-  const elV = document.getElementById('statVacancies');
-  const elI = document.getElementById('statInternships');
-  const elC = document.querySelector('.stat:nth-child(3) .stat-num');
-  const elS = document.querySelector('.stat:nth-child(4) .stat-num');
-
-  const counters = [
-    { el: elV, target: vacancyCount },
-    { el: elI, target: internshipCount },
-    { el: elC, target: companyCount },
-    { el: elS, target: sourceCount },
-  ];
-
-  const observer = new IntersectionObserver(entries => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        counters.forEach(c => { if (c.el) animateCounter(c.el, c.target); });
-        observer.disconnect();
-      }
-    });
-  }, { threshold: 0.5 });
-  const stats = document.querySelector('.stats');
-  if (stats) observer.observe(stats);
+  animateCounter(document.getElementById('statVacancies'), vacancyCount);
+  animateCounter(document.getElementById('statInternships'), internshipCount);
+  animateCounter(document.getElementById('statCompanies'), companyCount);
+  animateCounter(document.getElementById('statSources'), sourceCount);
 }
 
-// ===== CARD SAVE (demo) =====
 function initCardSave() {
-  document.getElementById('cardsGrid').addEventListener('click', e => {
+  const grid = document.getElementById('cardsGrid');
+  if (!grid) return;
+  grid.addEventListener('click', e => {
     const saveBtn = e.target.closest('.card-save');
     if (!saveBtn) return;
     saveBtn.classList.toggle('saved');
-    saveBtn.innerHTML = saveBtn.classList.contains('saved')
-      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>`
-      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
   });
 }
 
-// ===== TELEGRAM AUTH =====
 let _currentUser = null;
 
 window.onTelegramAuth = async function(tgUser) {
@@ -483,11 +513,11 @@ function _updateHeaderAuth(user) {
       loginBtn.parentElement.insertBefore(userBadge, loginBtn);
     }
     const avatar = user.photo_url
-      ? `<img class="user-avatar" src="${user.photo_url}" alt="">`
-      : `<div class="user-avatar-placeholder">${(user.first_name || '?')[0]}</div>`;
+      ? `<img class="user-avatar" src="${escapeHtml(user.photo_url)}" alt="">`
+      : `<div class="user-avatar-placeholder">${escapeHtml((user.first_name || '?')[0])}</div>`;
     userBadge.innerHTML = `
       ${avatar}
-      <span class="user-name">${user.first_name}${user.last_name ? ' ' + user.last_name : ''}</span>
+      <span class="user-name">${escapeHtml(user.first_name)}${user.last_name ? ' ' + escapeHtml(user.last_name) : ''}</span>
       <button class="user-logout" onclick="logout()" title="Выйти">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
       </button>`;
@@ -498,7 +528,6 @@ function _updateHeaderAuth(user) {
   }
 }
 
-// ===== DATA FROM API =====
 function _showCardsLoading() {
   const grid = document.getElementById('cardsGrid');
   const countEl = document.getElementById('resultsCount');
@@ -506,31 +535,32 @@ function _showCardsLoading() {
     <div class="empty-state">
       <div class="empty-icon" style="font-size:32px">⏳</div>
       <div class="empty-title">Загружаем вакансии…</div>
-      <div class="empty-sub">Получаем свежие данные с hh.ru и Telegram</div>
+      <div class="empty-sub">Только hh.ru и публичные Telegram-каналы</div>
     </div>`;
   if (countEl) countEl.textContent = 'Загружаем…';
 }
 
 async function loadLiveData() {
   try {
-    const [vacRes, newsRes] = await Promise.all([
+    const [vacRes, newsRes, srcRes] = await Promise.all([
       fetch('/api/live-vacancies?limit=200'),
       fetch('/api/live-news?limit=20'),
+      fetch('/api/sources'),
     ]);
+
+    if (srcRes.ok) {
+      const srcData = await srcRes.json();
+      if (srcData.sources && srcData.sources.length) {
+        renderSources(srcData.sources);
+      }
+    }
 
     if (vacRes.ok) {
       const vacData = await vacRes.json();
       VACANCIES = vacData.vacancies || [];
-
-      // Пересчитываем ключи дедупликации (website/telegram vs hh.ru)
-      DIRECT_SOURCE_ROLE_KEYS.clear();
-      VACANCIES
-        .filter(v => v.source.type !== 'hh')
-        .forEach(v => DIRECT_SOURCE_ROLE_KEYS.add(v.company.toLowerCase() + '::' + v.role));
-
       renderVacancies();
       initCounters();
-      _showLiveBadge(vacData.lastUpdate, VACANCIES.length, vacData.source);
+      _showLiveBadge(vacData.lastUpdate, VACANCIES.length, vacData.source, vacData.errors);
     }
 
     if (newsRes.ok) {
@@ -538,20 +568,23 @@ async function loadLiveData() {
       NEWS = newsData.news || [];
       renderNews();
     }
-
   } catch (_) {
     const grid = document.getElementById('cardsGrid');
     if (grid && !VACANCIES.length) grid.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">⚠️</div>
         <div class="empty-title">Не удалось загрузить данные</div>
-        <div class="empty-sub">Проверьте соединение и обновите страницу</div>
+        <div class="empty-sub">Проверьте соединение и обновите страницу. Статику не подставляем.</div>
       </div>`;
   }
 }
 
-function _showLiveBadge(lastUpdate, count, source) {
+function _showLiveBadge(lastUpdate, count, source, errors) {
   const statsBar = document.querySelector('.stats');
+  const hero = document.getElementById('heroTagText');
+  if (hero) {
+    hero.textContent = `${count} живых вакансий · ${SOURCES.length} источников · ${lastUpdate || 'ещё не обновлялось'}`;
+  }
   if (!statsBar) return;
   let badge = document.getElementById('liveBadge');
   if (!badge) {
@@ -560,11 +593,11 @@ function _showLiveBadge(lastUpdate, count, source) {
     badge.style.cssText = 'text-align:center;padding:6px 0 0;font-size:11px;color:var(--text2);';
     statsBar.insertAdjacentElement('afterend', badge);
   }
-  const label = source === 'live' ? 'Живые данные с hh.ru' : 'Данные';
-  badge.innerHTML = `<span style="color:var(--accent)">●</span> ${label}: ${count} вакансий · обновлено ${lastUpdate || 'только что'}`;
+  const err = (errors && errors.length) ? ` · ошибки: ${errors.join('; ')}` : '';
+  const label = source === 'live' ? 'Живые данные' : 'Кэш ещё пуст';
+  badge.innerHTML = `<span style="color:var(--accent)">●</span> ${escapeHtml(label)}: ${count} вакансий · обновлено ${escapeHtml(lastUpdate || 'ещё не обновлялось')}${escapeHtml(err)}`;
 }
 
-// ===== AI CAREER AGENT =====
 function _setStep(id, status, text) {
   const el = document.getElementById(id);
   const statusEl = document.getElementById(id + 'Status');
@@ -593,30 +626,14 @@ async function runCareerAgent() {
   _setStep('stepVerify', '', 'ожидание');
 
   try {
-    // Animate step transitions while waiting for server response
-    const planTimer = setTimeout(() => {
-      _setStep('stepPlan', 'ok', 'готово');
-      _setStep('stepAct', 'running', 'ищет на hh.ru…');
-    }, 1200);
-
-    const actTimer = setTimeout(() => {
-      _setStep('stepAct', 'ok', 'найдено');
-      _setStep('stepVerify', 'running', 'анализирует…');
-    }, 3500);
-
     const res = await fetch('/api/ai/agent-advice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role, skills, goals }),
     });
-
-    clearTimeout(planTimer);
-    clearTimeout(actTimer);
-
-    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || data.advice || ('HTTP ' + res.status));
 
-    // Update steps from real server data
     const steps = data.steps || [];
     const planStep = steps.find(s => s.step === 'plan');
     const actStep = steps.find(s => s.step === 'act');
@@ -633,29 +650,26 @@ async function runCareerAgent() {
       _setStep('stepVerify', 'ok', verifyStep.ok ? 'анализ готов' : 'ошибка');
     }
 
-    // Render found vacancies
     const vacsEl = document.getElementById('agentVacancies');
     if (data.vacancies && data.vacancies.length) {
       vacsEl.innerHTML = data.vacancies.map(v => `
         <div class="agent-vac-card">
-          <div class="agent-vac-title">${v.title}</div>
-          <div class="agent-vac-company">${v.company} · ${v.location}</div>
+          <div class="agent-vac-title">${escapeHtml(v.title)}</div>
+          <div class="agent-vac-company">${escapeHtml(v.company)} · ${escapeHtml(v.location)}</div>
           <div class="agent-vac-meta">
-            <span class="agent-vac-tag">${v.format}</span>
-            ${v.salary ? `<span class="agent-vac-tag">${v.salary}</span>` : ''}
-            <span class="agent-vac-tag">${v.role}</span>
+            <span class="agent-vac-tag">${escapeHtml(v.format)}</span>
+            ${v.salary ? `<span class="agent-vac-tag">${escapeHtml(v.salary)}</span>` : ''}
+            <span class="agent-vac-tag">${escapeHtml(v.role)}</span>
           </div>
-          <a class="agent-vac-link" href="${v.url}" target="_blank" rel="noopener">Открыть на hh.ru →</a>
+          <a class="agent-vac-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">Открыть источник →</a>
         </div>
       `).join('');
     } else {
-      vacsEl.innerHTML = '<p style="color:var(--text2);font-size:13px">Вакансии не найдены — агент всё равно даст совет</p>';
+      vacsEl.innerHTML = '<p style="color:var(--text2);font-size:13px">hh.ru ничего не вернул — фейковые вакансии не подставляем</p>';
     }
 
-    // Render advice
     document.getElementById('agentAdviceText').textContent = data.advice || 'Нет ответа от агента';
     resultsEl.style.display = 'flex';
-
   } catch (e) {
     _setStep('stepVerify', '', 'ошибка');
     document.getElementById('agentAdviceText').textContent = 'Ошибка: ' + e.message;
@@ -666,7 +680,6 @@ async function runCareerAgent() {
   }
 }
 
-// ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
   _showCardsLoading();
   renderSources();
@@ -677,6 +690,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initHeaderScroll();
   initNavHighlight();
   initCardSave();
+  const agentBtn = document.getElementById('agentRunBtn');
+  if (agentBtn) agentBtn.addEventListener('click', runCareerAgent);
   checkAuthState();
   _loadTelegramWidget();
   loadLiveData();

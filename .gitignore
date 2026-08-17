@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 *.egg-info/
 .DS_Store
+.pytest_cache/
+data/digest_settings.json
+data/*.tmp

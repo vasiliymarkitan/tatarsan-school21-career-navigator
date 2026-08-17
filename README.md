@@ -1,186 +1,142 @@
 # Карьерный Навигатор 21
 
-ИИ-дайджест стажировок и junior-вакансий для IT-специалистов Татарстана.  
-Парсит hh.ru и Telegram-каналы, генерирует саммари через GigaChat, авторизует через Telegram Login Widget.
+ИИ-дайджест стажировок и junior-вакансий для участников Школы 21 и начинающих IT-специалистов Татарстана.
 
-## Технический стек
+Сервис **реально** опрашивает hh.ru и четыре публичных Telegram-канала, снимает дубли и не подставляет статичные «демо-карточки». Персональный дайджест уходит в Telegram. MAX не подключён и не обещается.
 
-### Backend
-| Компонент | Технология |
-|---|---|
-| REST API | FastAPI 0.110+ (async) |
-| ASGI-сервер | uvicorn[standard] |
-| Валидация | Pydantic 2.0+ |
-| JWT-сессии | python-jose[cryptography] |
+## Что честно работает
 
-### AI / LLM
-| Компонент | Технология |
-|---|---|
-| Модель | **GigaChat** (Сбер) |
-| SDK | gigachat 0.2.1 |
-| Scope | `GIGACHAT_API_PERS` / `GIGACHAT_API_CORP` |
-| Сценарии | Саммари вакансий · Карьерные советы · AI-агент plan→act→verify |
+- Вакансии: публичный API hh.ru (Татарстан `area=88` + remote junior/стажировки).
+- Новости: HTML-превью `t.me/s/kazanit`, `it_tatarstan`, `innopolis_live`, `school21_kazan`.
+- Дедуп: id, URL, пара «компания + название», близкие заголовки одной компании.
+- Авторизация: Telegram Login Widget → httpOnly JWT. Слабый/пустой `JWT_SECRET` сессии не выдаёт.
+- Дайджест: сохранение расписания + ручная отправка + планировщик по МСК. Email нет.
+- LLM на демо: **YandexGPT Lite (AI Studio)**. GigaChat оставлен переключаемым (`LLM_PROVIDER=gigachat`).
 
-### Парсинг данных
-| Компонент | Технология |
-|---|---|
-| HTTP-клиент | httpx 0.27+ (async) |
-| HTML-парсинг | BeautifulSoup4 + lxml |
-| Вакансии | hh.ru Public API (без токена, area=88 Татарстан) |
-| Новости | Telegram HTML scraping (`t.me/s/<channel>`) |
+Если источник молчит, API отдаёт пустой список и ошибку источника — не фейковые вакансии.
 
-### Авторизация
-| Компонент | Технология |
-|---|---|
-| Вход | Telegram Login Widget |
-| Верификация | HMAC-SHA256 (подпись Telegram) |
-| Сессии | httpOnly JWT cookie (30 дней) |
-
-### Инфраструктура
-| Компонент | Технология |
-|---|---|
-| Контейнеризация | Docker + docker-compose |
-| Reverse proxy | nginx:alpine (80 → uvicorn :8000) |
-
-### Frontend
-- Vanilla JS (без фреймворков)
-- CSS custom properties, тёмная тема
-- Google Fonts: Inter + JetBrains Mono
-
-### Источники данных
-| Источник | Метод |
-|---|---|
-| hh.ru | Public REST API |
-| @kazanit | HTML scraping |
-| @it_tatarstan | HTML scraping |
-| @innopolis_live | HTML scraping |
-| @school21_kazan | HTML scraping |
-
-## Быстрый старт (Docker)
-
-```bash
-# 1. Клонировать репозиторий
-git clone ssh://git@tatarsan.space/Dinara/career_navigator_21school.git
-cd career_navigator_21school
-
-# 2. Создать .env из примера и заполнить переменные
-cp .env.example .env
-nano .env
-
-# 3. Поднять проект
-docker compose up --build -d
-```
-
-Сайт доступен на **http://localhost**.
-
----
-
-## Переменные окружения (`.env`)
-
-| Переменная | Обязательная | Описание |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | да | Токен бота от @BotFather |
-| `BOT_USERNAME` | да | Username бота без @ (например `my_bot`) |
-| `JWT_SECRET` | да | Случайная строка для подписи JWT — `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `GIGACHAT_CREDENTIALS` | нет | Authorization Key из [developers.sber.ru/studio](https://developers.sber.ru/studio) (base64 ClientID:ClientSecret) |
-| `GIGACHAT_SCOPE` | нет | `GIGACHAT_API_PERS` (физлицо) или `GIGACHAT_API_CORP` |
-
-Без `GIGACHAT_CREDENTIALS` AI-функции отключаются, остальное работает.
-
----
-
-## Локальный запуск без Docker
-
-Требования: Python 3.11+
+## Быстрый старт (локально)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements_web.txt
-
+pip install -r requirements-dev.txt
 cp .env.example .env
-# заполнить .env
+# заполните JWT_SECRET (32+ символов). Остальное можно оставить пустым для просмотра вакансий.
+
+CN21_DISABLE_BACKGROUND=1 pytest -q
 
 uvicorn api_server:app --reload --port 8000
 ```
 
-Сайт: **http://localhost:8000**
+Сайт: http://localhost:8000
 
----
+Без `YANDEX_API_KEY` + `YANDEX_FOLDER_ID` карточки и парсер работают, AI-эндпоинты отвечают 503.
 
-## Структура проекта
+## Docker / публичное демо
 
-```
-.
-├── api_server.py        # FastAPI backend — все роуты
-├── ai/
-│   └── giga.py          # GigaChat: саммари вакансий, карьерные советы
-├── parser/
-│   ├── hh_parser.py     # Парсер hh.ru API
-│   └── tg_parser.py     # Парсер публичных Telegram-каналов
-├── web/
-│   ├── index.html
-│   ├── css/style.css
-│   └── js/
-│       ├── app.js       # Логика UI, фильтры, авторизация
-│       └── data.js      # Статические данные (резерв)
-├── Dockerfile
-├── docker-compose.yml
-├── nginx.conf
-└── requirements_web.txt
+Порт хоста **8083**. Порты 80 и 443 этот compose не занимает.
+
+```bash
+cp .env.example .env
+# обязателен JWT_SECRET; для дайджеста — TELEGRAM_BOT_TOKEN и BOT_USERNAME
+# для AI на демо — YANDEX_API_KEY, YANDEX_FOLDER_ID, LLM_PROVIDER=yandex
+docker compose up --build -d
 ```
 
----
+Открыть: http://localhost:8083  
+Health: http://localhost:8083/api/health
+
+### Выкладка координатором на общий VPS
+
+SSH и выкладку делает координатор. Агент на чужие машины ничего не копирует.
+
+- Хост: `135.106.187.7`
+- Каталог: `/opt/tatarsan/school21`
+- Порт: `8083`
+
+```bash
+# на VPS, от координатора
+sudo mkdir -p /opt/tatarsan/school21
+# синхронизировать этот репозиторий в /opt/tatarsan/school21
+cd /opt/tatarsan/school21
+cp -n .env.example .env
+# вписать секреты в .env, не коммитить
+docker compose up --build -d
+```
+
+Демо: `http://135.106.187.7:8083`
+
+`COOKIE_SECURE=true` ставить только когда перед сервисом появится HTTPS. На голом `:8083` оставить `false`.
+
+Один worker uvicorn: кэш вакансий и планировщик дайджеста живут в памяти процесса.
+
+## Переменные окружения
+
+| Переменная | Обязательная | Описание |
+|---|---|---|
+| `JWT_SECRET` | для входа | ≥32 символа, не плейсхолдер из примера |
+| `TELEGRAM_BOT_TOKEN` | для входа и дайджеста | токен @BotFather |
+| `BOT_USERNAME` | для виджета | username без `@` |
+| `LLM_PROVIDER` | нет | `yandex` (по умолчанию) или `gigachat` |
+| `YANDEX_API_KEY` | для AI на демо | API-ключ AI Studio |
+| `YANDEX_FOLDER_ID` | для AI на демо | folder id, модель `gpt://<folder>/yandexgpt-lite/latest` |
+| `YANDEX_MODEL` | нет | по умолчанию `yandexgpt-lite` |
+| `YANDEX_API_BASE` | нет | `https://ai.api.cloud.yandex.net/v1` |
+| `GIGACHAT_CREDENTIALS` | только если `LLM_PROVIDER=gigachat` | ключ Сбера |
+| `COOKIE_SECURE` | нет | `true` только за HTTPS |
+| `HH_USER_AGENT` | нет | свой UA без личного email |
 
 ## API
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/api/live-vacancies` | Вакансии с hh.ru (с фильтрами `category`, `role`, `format`, `q`) |
-| GET | `/api/live-news` | Новости из Telegram-каналов |
-| GET | `/api/stats` | Счётчики: вакансии, стажировки, компании |
-| GET | `/api/health` | Состояние кэша и парсера |
-| POST | `/api/refresh` | Ручной запуск парсинга |
-| POST | `/api/auth/telegram` | Авторизация через Telegram Login Widget |
-| GET | `/api/auth/me` | Текущий пользователь по cookie |
+| GET | `/api/live-vacancies` | Живые вакансии hh.ru после дедупа |
+| GET | `/api/live-news` | Живые посты Telegram |
+| GET | `/api/sources` | Только реально опрашиваемые источники |
+| GET | `/api/stats` | Счётчики по кэшу, без статики |
+| GET | `/api/health` | Кэш, JWT, Telegram, LLM |
+| POST | `/api/refresh` | Ручной парсинг |
+| POST | `/api/auth/telegram` | Telegram Login → httpOnly JWT |
+| GET | `/api/auth/me` | Текущая сессия |
 | POST | `/api/auth/logout` | Выход |
-| GET | `/api/ai/status` | Включён ли GigaChat |
-| POST | `/api/ai/career-advice` | Персональные советы (`role`, `skills`, `goals`) |
-| POST | `/api/ai/agent-advice` | **AI-агент** plan→act→verify: планирует поиск, ищет на hh.ru, анализирует результаты |
-| POST | `/api/ai/summarize` | AI-саммари вакансии (`title`, `company`, `requirement`, `responsibility`) |
+| GET/POST | `/api/digest/settings` | Настройки дайджеста (нужна сессия) |
+| GET | `/api/digest/preview` | Текст дайджеста из живого кэша |
+| POST | `/api/digest/send` | Отправить дайджест в Telegram сейчас |
+| GET | `/api/ai/status` | Провайдер и чего не хватает |
+| POST | `/api/ai/career-advice` | Совет модели |
+| POST | `/api/ai/agent-advice` | План → hh.ru → разбор |
+| POST | `/api/ai/summarize` | Саммари одной вакансии |
 
-### Пример: карьерный совет
-
-```bash
-curl -X POST http://localhost:8000/api/ai/career-advice \
-  -H "Content-Type: application/json" \
-  -d '{"role":"backend","skills":"Python, SQL","goals":"стажировка в Казани"}'
-```
-
----
-
-## AI-disclosure
-
-Проект использует **GigaChat** (Сбер) в трёх сценариях:
-
-| Задача | Модуль | Как проверяли корректность |
-|--------|--------|---------------------------|
-| Саммари вакансии (2 предложения) | `ai/giga.py:summarize_vacancy` | Ручное сравнение с оригинальным текстом вакансии на hh.ru; галлюцинации (выдуманные требования) отклонялись |
-| Персональный карьерный совет | `ai/giga.py:get_career_advice` | Проверка реальности названных компаний и технологий; ответы сравнивались с актуальными страницами карьеры компаний |
-| **AI-агент** plan→act→verify | `ai/giga.py:run_career_agent` | Агент сначала планирует запрос, затем делает реальный поиск hh.ru API (верифицируемые данные), затем оценивает найденные вакансии — результат привязан к реальным объявлениям, что исключает выдумывание позиций |
-
-**Модель**: GigaChat (GIGACHAT_API_PERS / GIGACHAT_API_CORP)  
-**Что НЕ генерируется AI**: вакансии, компании, зарплаты — всё парсится с hh.ru и Telegram напрямую.
-
----
-
-## Деплой на сервер
+## Тесты
 
 ```bash
-# На сервере: обновить файлы и пересобрать контейнер
-git pull origin develop
-docker compose up --build -d
+pip install -r requirements-dev.txt
+CN21_DISABLE_BACKGROUND=1 pytest -q
 ```
 
-Nginx слушает порт 80, проксирует на uvicorn :8000.  
-Для HTTPS — добавить certbot и поменять `secure=False` на `secure=True` в `api_server.py:347`.
+CI: `.github/workflows/ci.yml` гоняет тот же набор на Python 3.11.
+
+## Чего нет
+
+- Мессенджер MAX — не реализован и не обещается.
+- Email-дайджест — не реализован.
+- Парсинг карьерных сайтов компаний — в источниках не числится, пока его нет.
+- `main.py` — старый каркас aiogram-бота без модулей `db/` / `bot/`. Рабочий путь — FastAPI + compose.
+
+## Структура
+
+```
+api_server.py          FastAPI
+auth_utils.py          JWT + проверка Telegram
+ai/provider.py         фасад LLM (yandex | gigachat)
+ai/yandex.py           YandexGPT Lite / AI Studio
+ai/giga.py             GigaChat, переключаемый
+parser/hh_parser.py    hh.ru
+parser/tg_parser.py    t.me/s/
+parser/dedup.py        дедуп вакансий и новостей
+digest/                настройки, превью, Bot API, планировщик
+web/                   статичный фронт
+docker-compose.yml     nginx :8083 → app :8000
+tests/                 pytest
+```
