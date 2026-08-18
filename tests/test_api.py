@@ -27,8 +27,17 @@ def test_health_and_sources_are_honest(client):
     assert "llm" in health
     sources = client.get("/api/sources").json()
     names = {row["name"] for row in sources["sources"]}
-    assert names == {"hh.ru", "@kazanit", "@it_tatarstan", "@innopolis_live", "@school21_kazan"}
-    assert sources["count"] == 5
+    assert names == {
+        "hh.ru",
+        "Yandex Search → hh.ru",
+        "@kazanit",
+        "@it_tatarstan",
+        "@innopolis_live",
+        "@school21_kazan",
+    }
+    assert sources["count"] == 6
+    assert "yandex_search" in health
+    assert health["errors"] == []
 
 
 def test_vacancies_and_news_do_not_use_static_fallback(client):
@@ -41,7 +50,7 @@ def test_vacancies_and_news_do_not_use_static_fallback(client):
     assert "KazanExpress" not in str(vacs)
     assert "Digital Tatarstan 2026" not in str(news)
     assert stats["total_vacancies"] == 0
-    assert stats["total_sources"] == 5
+    assert stats["total_sources"] == 6
 
 
 def test_live_vacancies_return_cache_only(client):
@@ -124,6 +133,90 @@ def test_digest_save_and_send_honest_errors(client, monkeypatch):
     sent = client.post("/api/digest/send")
     assert sent.status_code == 502
     assert "start" in sent.json()["error"].lower()
+
+
+def test_empty_hh_plus_mocked_search_returns_cards(client, monkeypatch):
+    card = {
+        "id": "ys_abc",
+        "title": "Junior Backend — ICL Services",
+        "company": "ICL Services",
+        "role": "backend",
+        "category": "vacancy",
+        "format": "remote",
+        "url": "https://hh.ru/vacancy/123456",
+        "tags": ["junior", "backend"],
+        "source": {"type": "yandex", "name": "Yandex Search → hh.ru", "url": "https://hh.ru/vacancy/123456"},
+    }
+
+    async def fake_hh(role):
+        return [], ["hh.ru: HTTP 403 forbidden"]
+
+    async def fake_ys(role=None):
+        assert role == "backend"
+        return [card], []
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", fake_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", fake_ys)
+    response = client.get("/api/live-vacancies", params={"role": "backend"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["vacancies"][0]["url"] == "https://hh.ru/vacancy/123456"
+    assert body["vacancies"][0]["source"]["name"] == "Yandex Search → hh.ru"
+    assert body["live"] is True
+
+
+def test_role_search_503_when_hh_and_yandex_fail(client, monkeypatch):
+    async def fake_hh(role):
+        return [], ["hh.ru: HTTP 403 forbidden"]
+
+    async def fake_ys(role=None):
+        return [], ["Yandex Search: HTTP 403 Permission denied. Нужны scope yc.search-api.execute"]
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", fake_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", fake_ys)
+    response = client.get("/api/live-vacancies", params={"role": "frontend"})
+    assert response.status_code == 503
+    body = response.json()
+    assert body["vacancies"] == []
+    assert body["errors"]
+    assert any("403" in err for err in body["errors"])
+    health = client.get("/api/health").json()
+    assert health["fetch_error"]
+    assert health["cached_vacancies"] == 0
+    assert health["errors"]
+
+
+def test_role_search_does_not_wait_for_warm_cache(client, monkeypatch):
+    calls = {"n": 0}
+
+    async def fake_hh(role):
+        return [], []
+
+    async def fake_ys(role=None):
+        calls["n"] += 1
+        return [
+            {
+                "id": "ys_on_demand",
+                "title": "Стажёр frontend",
+                "company": "",
+                "role": "frontend",
+                "category": "internship",
+                "format": "office",
+                "url": "https://hh.ru/vacancy/777",
+                "tags": [],
+                "source": {"type": "yandex", "name": "Yandex Search → hh.ru", "url": "https://hh.ru/vacancy/777"},
+            }
+        ], []
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", fake_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", fake_ys)
+    first = client.get("/api/live-vacancies", params={"role": "frontend"})
+    assert first.status_code == 200
+    assert first.json()["vacancies"][0]["id"] == "ys_on_demand"
+    second = client.get("/api/live-vacancies", params={"role": "frontend"})
+    assert second.status_code == 200
+    assert calls["n"] == 1
 
 
 def test_no_fake_register_endpoint(client):

@@ -40,8 +40,9 @@ from digest import scheduler as digest_scheduler
 from digest import store as digest_store
 from digest import telegram as digest_telegram
 from parser.dedup import dedup_news, dedup_vacancies
-from parser.hh_parser import fetch_hh_vacancies
+from parser.hh_parser import fetch_hh_vacancies, fetch_hh_vacancies_for_role
 from parser.tg_parser import CHANNELS, fetch_tg_news
+from parser import yandex_search
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ _bot_username: str = os.getenv("BOT_USERNAME", "").strip()
 
 REAL_SOURCES = [
     {"type": "hh", "name": "hh.ru", "url": "https://api.hh.ru/vacancies", "kind": "vacancies"},
+    {
+        "type": "yandex",
+        "name": "Yandex Search → hh.ru",
+        "url": yandex_search.DEFAULT_SEARCH_URL,
+        "kind": "vacancies",
+    },
     *[
         {
             "type": "telegram",
@@ -67,6 +74,8 @@ REAL_SOURCES = [
         for channel_id, handle, _ in CHANNELS
     ],
 ]
+
+_role_locks: dict[str, asyncio.Lock] = {}
 
 _cache: dict = {
     "vacancies": [],
@@ -91,43 +100,113 @@ def _last_update_label() -> str:
     return f"{hours} ч. назад"
 
 
+def _lock_for(role: str) -> asyncio.Lock:
+    lock = _role_locks.get(role)
+    if lock is None:
+        lock = asyncio.Lock()
+        _role_locks[role] = lock
+    return lock
+
+
+def _unpack_fetch(result, label: str) -> tuple[list, list[str]]:
+    if isinstance(result, Exception):
+        logger.error("%s parser error: %s", label, result)
+        return [], [f"{label}: {result}"]
+    if isinstance(result, tuple) and len(result) == 2:
+        items, errors = result
+        return list(items or []), list(errors or [])
+    if isinstance(result, list):
+        return result, []
+    return [], [f"{label}: unexpected result"]
+
+
+def _store_errors(source_errors: list[str]) -> None:
+    # Preserve unique messages, keep order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in source_errors:
+        if item and item not in seen:
+            seen.add(item)
+            unique.append(item)
+    _cache["source_errors"] = unique
+    _cache["fetch_error"] = "; ".join(unique) if unique else None
+
+
+def _cache_has_role(role: Optional[str]) -> bool:
+    vacancies = _cache["vacancies"]
+    if not vacancies:
+        return False
+    if not role or role == "all":
+        return True
+    return any(item.get("role") == role for item in vacancies)
+
+
+async def _ingest_role(role: Optional[str]) -> tuple[list[dict], list[str]]:
+    """hh.ru (if it works) + Yandex Search for one role or the demo set."""
+    hh_out, ys_out = await asyncio.gather(
+        fetch_hh_vacancies_for_role(role),
+        yandex_search.fetch_yandex_vacancies(role),
+        return_exceptions=True,
+    )
+    hh_items, hh_errors = _unpack_fetch(hh_out, "hh.ru")
+    ys_items, ys_errors = _unpack_fetch(ys_out, "Yandex Search")
+    merged = dedup_vacancies(list(hh_items) + list(ys_items))
+    return merged, hh_errors + ys_errors
+
+
+async def _ensure_role_vacancies(role: Optional[str]) -> tuple[list[dict], list[str], bool]:
+    """On-demand search when the cache has no cards for this role."""
+    key = (role or "all").strip().lower() or "all"
+    if _cache_has_role(key if key != "all" else None):
+        return list(_cache["vacancies"]), list(_cache["source_errors"]), False
+
+    async with _lock_for(key):
+        if _cache_has_role(key if key != "all" else None):
+            return list(_cache["vacancies"]), list(_cache["source_errors"]), False
+        items, errors = await _ingest_role(None if key == "all" else key)
+        _cache["vacancies"] = dedup_vacancies(list(_cache["vacancies"]) + items)
+        _cache["last_update"] = datetime.now(timezone.utc)
+        _store_errors(errors)
+        return list(_cache["vacancies"]), list(_cache["source_errors"]), True
+
+
 async def _refresh():
     logger.info("Запуск парсинга источников…")
     source_errors: list[str] = []
-    hh_vacancies, tg_news = await asyncio.gather(
+    hh_out, tg_news, ys_out = await asyncio.gather(
         fetch_hh_vacancies(),
         fetch_tg_news(),
+        yandex_search.fetch_yandex_vacancies(None),
         return_exceptions=True,
     )
 
-    if isinstance(hh_vacancies, Exception):
-        logger.error("hh.ru parser error: %s", hh_vacancies)
-        source_errors.append(f"hh.ru: {hh_vacancies}")
-        hh_vacancies = []
+    hh_vacancies, hh_errors = _unpack_fetch(hh_out, "hh.ru")
+    source_errors.extend(hh_errors)
+    ys_vacancies, ys_errors = _unpack_fetch(ys_out, "Yandex Search")
+    source_errors.extend(ys_errors)
     if isinstance(tg_news, Exception):
         logger.error("Telegram parser error: %s", tg_news)
         source_errors.append(f"telegram: {tg_news}")
         tg_news = []
 
-    hh_vacancies = dedup_vacancies(hh_vacancies)
+    vacancies = dedup_vacancies(list(hh_vacancies) + list(ys_vacancies))
     tg_news = dedup_news(tg_news)
 
-    if llm.is_enabled() and hh_vacancies:
+    if llm.is_enabled() and vacancies:
         try:
-            hh_vacancies = await llm.enrich_vacancies(hh_vacancies, limit=5)
+            vacancies = await llm.enrich_vacancies(vacancies, limit=5)
             logger.info("%s: enriched top-5 vacancy summaries", llm.status()["provider"])
         except Exception as exc:
             logger.warning("LLM enrich failed: %s", exc)
             source_errors.append(f"llm: {exc}")
 
-    _cache["vacancies"] = hh_vacancies
+    _cache["vacancies"] = vacancies
     _cache["news"] = tg_news
     _cache["last_update"] = datetime.now(timezone.utc)
-    _cache["fetch_error"] = "; ".join(source_errors) if source_errors else None
-    _cache["source_errors"] = source_errors
+    _store_errors(source_errors)
     logger.info(
-        "Парсинг завершён: %d вакансий с hh.ru, %d новостей из Telegram",
-        len(hh_vacancies),
+        "Парсинг завершён: %d вакансий (hh.ru + Yandex Search), %d новостей из Telegram",
+        len(vacancies),
         len(tg_news),
     )
 
@@ -189,7 +268,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Карьерный Навигатор 21 API", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Карьерный Навигатор 21 API", version="2.2.0", lifespan=lifespan)
 
 
 class CareerAdviceRequest(BaseModel):
@@ -263,6 +342,18 @@ async def get_live_vacancies(
     limit: int = Query(50, le=200),
     offset: int = Query(0),
 ):
+    role_key = (role or "").strip().lower() or None
+    need_search = bool(role_key and role_key != "all" and not _cache_has_role(role_key))
+    attempted = False
+    if need_search:
+        _items, errors, _attempted = await _ensure_role_vacancies(role_key)
+        payload = _vacancy_payload(category, role, format, q, limit, offset)
+        payload["errors"] = list(errors)
+        if not payload["vacancies"] and errors:
+            payload["live"] = False
+            payload["source"] = "error"
+            return JSONResponse(payload, status_code=503)
+        return JSONResponse(payload)
     return JSONResponse(_vacancy_payload(category, role, format, q, limit, offset))
 
 
@@ -286,7 +377,10 @@ async def get_sources():
         {
             "sources": REAL_SOURCES,
             "count": len(REAL_SOURCES),
-            "note": "Только эти источники реально опрашиваются. Сайты компаний и неподключённые каналы не подмешиваются.",
+            "note": (
+                "Опрашиваются hh.ru Public API и Yandex Search API (запросы site:hh.ru и аналоги). "
+                "Карточка ведёт на URL из выдачи. Сайты компаний и неподключённые каналы не числятся источниками."
+            ),
         }
     )
 
@@ -317,6 +411,7 @@ async def get_stats():
 @app.get("/api/health")
 async def health():
     llm_status = llm.status()
+    errors = list(_cache["source_errors"])
     return {
         "status": "ok",
         "service": "Карьерный Навигатор 21",
@@ -324,10 +419,12 @@ async def health():
         "cached_news": len(_cache["news"]),
         "last_update": _last_update_label(),
         "fetch_error": _cache["fetch_error"],
+        "errors": errors,
         "jwt_configured": is_jwt_secret_configured(JWT_SECRET),
         "telegram_auth_configured": bool(BOT_TOKEN and _bot_username),
         "digest_configured": digest_telegram.is_configured(),
         "llm": llm_status,
+        "yandex_search": yandex_search.status(),
     }
 
 
