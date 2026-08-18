@@ -1,20 +1,31 @@
 """
-Yandex Cloud Search API v2 — live vacancy pages, no invented cards.
+Yandex Search API (AI Studio docs) — live vacancy pages, no invented cards.
 
-Endpoint (verified against public Search API docs / SearXNG / official MCP):
-  POST https://searchapi.api.cloud.yandex.net/v2/web/search
-  Authorization: Api-Key <key>
-  body.folderId + query.searchType=SEARCH_TYPE_RU, responseFormat=FORMAT_XML
-  response: {"rawData": "<base64 XML>"}
+Official text-search contract (cloudapi proto, not guessed):
+  yandex/cloud/searchapi/v2/search_service.proto
+  Docs: https://aistudio.yandex.ru/docs/ru/search-api/concepts/
 
-The existing YANDEX_API_KEY is reused. If that key lacks Search API scope,
-set YANDEX_SEARCH_API_KEY (do not commit it). IAM:
-  API key scope: yc.search-api.execute
-  service-account roles: search-api.webSearch.user and/or search-api.executor
+Sync REST:  POST https://searchapi.api.cloud.yandex.net/v2/web/search
+Deferred:   POST …/v2/web/searchAsync  (Operation + poll; not used here)
 
-We do not call AI Studio chat/completions with a web_search tool: that
-endpoint only accepts type=function, and an LLM-shaped answer can invent
-companies and salaries. This client maps title/snippet/url from the hit only.
+Auth: Authorization: Api-Key <key>  (AI Studio key + folderId in the body).
+IAM Bearer is an alternative. The folder must have a billing account.
+
+Text web search returns WebSearchResponse.raw_data = XML or HTML bytes
+(REST JSON wraps that as base64 "rawData"). There is NO {title,url,snippet}
+JSON for text search. Structured JSON exists on image-by-image search,
+not on /v2/web/search.
+
+Parse only Yandex XML: <doc> → <url>, <title>, <passages>/<headline>.
+Query operators site: / host: / lang: are supported.
+
+The AI Studio agent Web Search *tool* (model calls a tool) is a different
+product. Cards are built from Search API XML + real URLs only.
+
+If YANDEX_API_KEY cannot call Search API (401/403), return honest errors[].
+Roles/scope if the key is GPT-only: search-api.webSearch.user and/or
+search-api.executor; API key scope yc.search-api.execute.
+Optional override: YANDEX_SEARCH_API_KEY (do not commit).
 """
 
 from __future__ import annotations
@@ -45,6 +56,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_SEARCH_URL = "https://searchapi.api.cloud.yandex.net/v2/web/search"
 SEARCH_TYPE_RU = "SEARCH_TYPE_RU"
 LOCALIZATION_RU = "LOCALIZATION_RU"
+# Proto: max_passages = 1-5; groups_on_page = 1-100; docs_in_group = 1-3
+MAX_PASSAGES = 3
+GROUPS_ON_PAGE = 10
+DOCS_IN_GROUP = 1
+DEFAULT_UA = (
+    "CareerNavigator21/1.0 "
+    "(+https://github.com/vasiliymarkitan/tatarsan-school21-career-navigator)"
+)
 
 # Demo roles from the hero chips. Queries always include junior/стажировка
 # plus Tatarstan / Innopolis / remote Russia, constrained to public job sites.
@@ -92,10 +111,10 @@ _SALARY_RE = re.compile(
 )
 
 MISSING_SCOPE_HINT = (
-    "Нужны scope yc.search-api.execute на API-ключе и роль "
-    "search-api.webSearch.user (или search-api.executor) на сервисном аккаунте. "
-    "Если текущий YANDEX_API_KEY только для YandexGPT, задайте отдельный "
-    "YANDEX_SEARCH_API_KEY."
+    "Ключ AI Studio часто уже умеет Search API (Authorization: Api-Key, folderId в теле). "
+    "Если ответ 401/403: на сервисе нужны роли search-api.webSearch.user и/или "
+    "search-api.executor, у ключа — scope yc.search-api.execute; к каталогу должен "
+    "быть привязан биллинг-аккаунт. Отдельный ключ — YANDEX_SEARCH_API_KEY (не коммитить)."
 )
 
 
@@ -241,11 +260,11 @@ def build_queries(role: Optional[str] = None) -> list[str]:
     for item in roles:
         terms = ROLE_TERMS.get(item, item)
         queries.append(
-            f"site:hh.ru (junior OR стажировка OR intern) ({terms}) "
+            f"site:hh.ru lang:ru (junior OR стажировка OR intern) ({terms}) "
             f"(Казань OR Татарстан OR Иннополис)"
         )
         queries.append(
-            f"site:hh.ru (junior OR стажировка OR intern) ({terms}) "
+            f"site:hh.ru lang:ru (junior OR стажировка OR intern) ({terms}) "
             f"(удалённ* OR удаленн* OR remote) (Россия OR РФ)"
         )
     # De-dup while keeping order; Search API rejects queryText > 400 chars.
@@ -294,15 +313,52 @@ def parse_search_xml(xml_text: str) -> tuple[list[dict], Optional[str]]:
 
 
 def decode_raw_data(payload: dict) -> str:
+    """Text search returns rawData (base64 XML/HTML), not a JSON hit list."""
+    if not isinstance(payload, dict):
+        raise SearchAPIError("Yandex Search: ответ не объект JSON-обёртки rawData")
+    if "title" in payload and "url" in payload and "rawData" not in payload:
+        raise SearchAPIError(
+            "Yandex Search: текстовый поиск не отдаёт JSON {title,url,snippet}; "
+            "ожидали rawData (XML)"
+        )
     raw = payload.get("rawData")
     if not raw:
-        raise SearchAPIError("Yandex Search: в ответе нет rawData")
+        raise SearchAPIError("Yandex Search: в ответе нет rawData (текстовый поиск = XML/HTML)")
     if isinstance(raw, bytes):
-        return raw.decode("utf-8", errors="replace")
-    try:
-        return base64.b64decode(raw).decode("utf-8", errors="replace")
-    except Exception as exc:
-        raise SearchAPIError(f"Yandex Search: не декодировали rawData ({exc})") from exc
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        try:
+            text = base64.b64decode(raw).decode("utf-8", errors="replace")
+        except Exception as exc:
+            raise SearchAPIError(f"Yandex Search: не декодировали rawData ({exc})") from exc
+    stripped = text.lstrip().lower()
+    if stripped.startswith("<!doctype html") or stripped.startswith("<html"):
+        raise SearchAPIError(
+            "Yandex Search: пришёл HTML (FORMAT_HTML). Для карточек нужен FORMAT_XML."
+        )
+    return text
+
+
+def build_web_search_body(query: str) -> dict:
+    """WebSearchRequest JSON as in search_service.proto (camelCase REST)."""
+    return {
+        "query": {
+            "searchType": SEARCH_TYPE_RU,
+            "queryText": query,
+            "familyMode": "FAMILY_MODE_NONE",
+            "page": 0,
+        },
+        "groupSpec": {
+            "groupMode": "GROUP_MODE_FLAT",
+            "groupsOnPage": GROUPS_ON_PAGE,
+            "docsInGroup": DOCS_IN_GROUP,
+        },
+        "maxPassages": MAX_PASSAGES,
+        "l10n": LOCALIZATION_RU,
+        "folderId": folder_id(),
+        "responseFormat": "FORMAT_XML",
+        "userAgent": DEFAULT_UA,
+    }
 
 
 _NOT_COMPANY = {
@@ -473,29 +529,11 @@ async def web_search(query: str, *, timeout: float = 20) -> list[dict]:
     if not query or len(query) > 400:
         raise SearchAPIError("Yandex Search: пустой или слишком длинный запрос")
 
-    payload = {
-        "query": {
-            "searchType": SEARCH_TYPE_RU,
-            "queryText": query,
-            "familyMode": "FAMILY_MODE_NONE",
-            "page": "0",
-        },
-        "groupSpec": {
-            "groupMode": "GROUP_MODE_FLAT",
-            "groupsOnPage": "10",
-            "docsInGroup": "1",
-        },
-        "l10n": LOCALIZATION_RU,
-        "folderId": folder_id(),
-        "responseFormat": "FORMAT_XML",
-    }
+    payload = build_web_search_body(query)
     headers = {
         "Authorization": _auth_header(),
         "Content-Type": "application/json",
-        "User-Agent": (
-            "CareerNavigator21/1.0 "
-            "(+https://github.com/vasiliymarkitan/tatarsan-school21-career-navigator)"
-        ),
+        "User-Agent": DEFAULT_UA,
     }
     folder = folder_id()
     if folder:

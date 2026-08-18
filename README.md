@@ -128,21 +128,28 @@ CI: `.github/workflows/ci.yml` гоняет тот же набор на Python 3
 - Мессенджер MAX — не реализован и не обещается.
 - Email-дайджест — не реализован.
 - Парсинг карьерных сайтов компаний — в источниках не числится, пока его нет. Если Yandex вернул URL SuperJob/Habr Career, карточка помечается `Yandex Search → <хост>`, сам сайт в список источников не добавляется.
-- Инструмент Web Search в AI Studio chat/completions не используется: там `tools` принимает только `function`, а ответ модели может выдумать компанию. Берём Search API v2 и поля title/snippet/url как есть.
+- Инструмент Web Search у агента AI Studio (модель сама вызывает tool) ≠ сырой Search API. Карточки строим из Search API + XML, не из ответа модели.
 - `main.py` — старый каркас aiogram-бота без модулей `db/` / `bot/`. Рабочий путь — FastAPI + compose.
 
 ## Yandex Search API (демо на VPS)
 
-Эндпоинт: `POST https://searchapi.api.cloud.yandex.net/v2/web/search`  
-Документация: [Search API](https://aistudio.yandex.ru/docs/ru/search-api/concepts/), [Web Search tool](https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/agents/tools/websearch.html).
+Документация: [Search API concepts](https://aistudio.yandex.ru/docs/ru/search-api/concepts/), [quickstart](https://aistudio.yandex.ru/docs/ru/search-api/).  
+Схема запроса — официальный proto `WebSearchRequest` / `WebSearchResponse` в [cloudapi search_service.proto](https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/searchapi/v2/search_service.proto). Python SDK семейства `yandex-cloud-ml-sdk` / `yandex-ai-studio-sdk` тот же API; в сервисе зовём REST напрямую, чтобы CI мокал HTTP.
 
-На демо уже есть `YANDEX_API_KEY` и `YANDEX_FOLDER_ID=b1guda0p3tk70m5m13og`. Клиент поиска их переиспользует. Если ключ только для YandexGPT, Search API ответит 401/403 — UI и `/api/health` покажут ошибку и подсказку про роли.
+**Синхронный текст:** `POST https://searchapi.api.cloud.yandex.net/v2/web/search`  
+**Отложенный:** `POST …/v2/web/searchAsync` (Operation + poll) — для демо не используем.
 
-Что выдать сервисному аккаунту, чтобы поиск заработал:
+Тело (поля proto, JSON camelCase): `query.searchType`, `query.queryText` (≤400), `query.familyMode`, `query.page`, `groupSpec.{groupMode,groupsOnPage,docsInGroup}`, `maxPassages` (1–5), `l10n`, `folderId`, `responseFormat=FORMAT_XML`, `userAgent`. `region` не подставляем — id региона не угадываем, география в `queryText` (`Казань|Татарстан|Иннополис` / удалёнка РФ) плюс операторы `site:` и `lang:ru`.
 
-1. Роль `search-api.webSearch.user` (в документации также встречается `search-api.executor`).
-2. API-ключ со scope `yc.search-api.execute`.
-3. Если это другой ключ — вписать его в `YANDEX_SEARCH_API_KEY` на VPS, не в git.
+Ответ текстового поиска: `{ "rawData": "<base64 XML или HTML>" }`. Это **не** JSON `{title,url,snippet}`. Парсим XML: `<doc>` → `<url>`, `<title>`, `<passages>` / `<headline>`. Готовый JSON есть у image search by image, не у `/v2/web/search`.
+
+Auth: `Authorization: Api-Key <YANDEX_API_KEY>`, `folderId` в теле. IAM `Bearer` — запасной путь (`YANDEX_IAM_TOKEN`). К каталогу должен быть привязан биллинг-аккаунт, иначе запросы не пойдут. Документация AI Studio: ключ студии уже может нести нужные роли.
+
+Если всё же 401/403 — честный `errors[]` / HTTP 503, без фейковых карточек. Тогда на сервисе:
+
+1. Роль `search-api.webSearch.user` и/или `search-api.executor`
+2. Scope ключа `yc.search-api.execute`
+3. При отдельном ключе — `YANDEX_SEARCH_API_KEY` только на VPS, не в git
 
 ## Структура
 

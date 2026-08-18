@@ -60,6 +60,7 @@ def test_build_queries_include_role_and_tatarstan_or_remote():
     blob = " ".join(queries).lower()
     assert queries
     assert all("site:hh.ru" in q for q in queries)
+    assert all("lang:ru" in q for q in queries)
     assert "backend" in blob or "python" in blob
     assert "junior" in blob
     assert "стажировка" in blob
@@ -124,6 +125,30 @@ def test_decode_raw_data_roundtrip():
     assert "hh.ru/vacancy/123456" in decode_raw_data({"rawData": raw})
 
 
+def test_text_search_rejects_invented_json_hits():
+    try:
+        decode_raw_data({"title": "Junior", "url": "https://hh.ru/vacancy/1", "snippet": "x"})
+        assert False, "expected SearchAPIError"
+    except yandex_search.SearchAPIError as exc:
+        assert "rawData" in str(exc)
+
+
+def test_web_search_body_matches_official_proto(monkeypatch):
+    monkeypatch.setenv("YANDEX_FOLDER_ID", "b1guda0p3tk70m5m13og")
+    body = yandex_search.build_web_search_body("site:hh.ru lang:ru junior backend Казань")
+    assert body["folderId"] == "b1guda0p3tk70m5m13og"
+    assert body["query"]["searchType"] == "SEARCH_TYPE_RU"
+    assert body["query"]["page"] == 0
+    assert body["groupSpec"]["groupMode"] == "GROUP_MODE_FLAT"
+    assert body["groupSpec"]["groupsOnPage"] == 10
+    assert body["groupSpec"]["docsInGroup"] == 1
+    assert body["maxPassages"] == 3
+    assert body["l10n"] == "LOCALIZATION_RU"
+    assert body["responseFormat"] == "FORMAT_XML"
+    assert "gmail" not in body["userAgent"].lower()
+    assert "region" not in body  # region id не угадываем
+
+
 class _Resp:
     def __init__(self, status_code, payload=None, text=""):
         self.status_code = status_code
@@ -169,7 +194,11 @@ def test_search_client_mocked_http_maps_cards(monkeypatch):
     assert captured["headers"]["Authorization"] == "Api-Key test-search-key"
     assert captured["body"]["folderId"] == "b1guda0p3tk70m5m13og"
     assert captured["body"]["query"]["searchType"] == "SEARCH_TYPE_RU"
+    assert captured["body"]["query"]["page"] == 0
+    assert captured["body"]["maxPassages"] == 3
+    assert captured["body"]["responseFormat"] == "FORMAT_XML"
     assert "site:hh.ru" in captured["body"]["query"]["queryText"]
+    assert "lang:ru" in captured["body"]["query"]["queryText"]
 
 
 def test_search_api_key_override(monkeypatch):
