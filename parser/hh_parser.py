@@ -209,6 +209,74 @@ def _map_vacancy(item: dict, idx: int) -> dict:
     }
 
 
+ROLE_SEARCH_TEXT = {
+    "backend": "junior backend OR junior python OR стажировка python OR стажёр backend",
+    "frontend": "junior frontend OR junior react OR стажировка frontend",
+    "data": "junior data OR стажировка data scientist OR junior ML",
+    "devops": "junior devops OR стажировка devops",
+    "mobile": "junior android OR junior ios OR стажировка mobile",
+    "qa": "junior qa OR стажировка тестировщик",
+    "analytics": "junior аналитик данных OR стажировка аналитик",
+    "design": "junior ux/ui OR стажировка дизайнер",
+    "pm": "junior product manager OR стажировка project manager",
+}
+
+
+def _hh_error_text(resp) -> str:
+    snippet = ""
+    try:
+        snippet = (resp.text or "").replace("\n", " ")[:180].strip()
+    except Exception:
+        snippet = ""
+    if snippet:
+        return f"hh.ru: HTTP {resp.status_code} {snippet}"
+    return f"hh.ru: HTTP {resp.status_code}"
+
+
+async def _hh_collect(params_list: list[dict]) -> tuple[list[dict], list[str]]:
+    """Run hh.ru searches and surface HTTP/network failures instead of swallowing them."""
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    results: list[dict] = []
+    idx = 0
+
+    async with httpx.AsyncClient(headers=request_headers(), timeout=15) as client:
+        responses = await asyncio.gather(
+            *[client.get(HH_API, params=params) for params in params_list],
+            return_exceptions=True,
+        )
+
+    for resp in responses:
+        if isinstance(resp, Exception):
+            logger.warning("hh.ru request failed: %s", resp)
+            errors.append(f"hh.ru: {resp}")
+            continue
+        if resp.status_code != 200:
+            message = _hh_error_text(resp)
+            logger.warning("%s", message)
+            errors.append(message)
+            continue
+        try:
+            data = resp.json()
+        except Exception as exc:
+            errors.append(f"hh.ru: ответ не JSON ({exc})")
+            continue
+        for item in data.get("items", []):
+            hh_id = item.get("id")
+            if not hh_id or hh_id in seen_ids:
+                continue
+            seen_ids.add(hh_id)
+            try:
+                results.append(_map_vacancy(item, idx))
+                idx += 1
+            except Exception as exc:
+                logger.warning("Failed to map vacancy %s: %s", hh_id, exc)
+
+    results = dedup_vacancies(results)
+    logger.info("hh.ru: fetched %d vacancies after dedup, %d errors", len(results), len(errors))
+    return results, errors
+
+
 async def fetch_vacancies_by_query(
     text: str,
     area: str = "88",
@@ -224,56 +292,21 @@ async def fetch_vacancies_by_query(
     }
     if schedule:
         params["schedule"] = schedule
-
-    async with httpx.AsyncClient(headers=request_headers(), timeout=15) as client:
-        try:
-            resp = await client.get(HH_API, params=params)
-        except Exception as e:
-            logger.warning("fetch_vacancies_by_query error: %s", e)
-            return []
-
-    if resp.status_code != 200:
-        logger.warning("hh.ru agent search returned %d", resp.status_code)
-        return []
-
-    results: list[dict] = []
-    for idx, item in enumerate(resp.json().get("items", [])):
-        try:
-            results.append(_map_vacancy(item, idx))
-        except Exception:
-            pass
-    logger.info("Agent hh.ru search '%s': %d results", text, len(results))
-    return results
+    items, _errors = await _hh_collect([params])
+    logger.info("Agent hh.ru search '%s': %d results", text, len(items))
+    return items
 
 
-async def fetch_hh_vacancies() -> list[dict]:
-    seen_ids: set[str] = set()
-    results: list[dict] = []
-    idx = 0
+async def fetch_hh_vacancies() -> tuple[list[dict], list[str]]:
+    return await _hh_collect(SEARCHES)
 
-    async with httpx.AsyncClient(headers=request_headers(), timeout=15) as client:
-        tasks = [client.get(HH_API, params=s) for s in SEARCHES]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for resp in responses:
-        if isinstance(resp, Exception):
-            logger.warning("hh.ru request failed: %s", resp)
-            continue
-        try:
-            data = resp.json()
-        except Exception:
-            continue
-        for item in data.get("items", []):
-            hh_id = item.get("id")
-            if not hh_id or hh_id in seen_ids:
-                continue
-            seen_ids.add(hh_id)
-            try:
-                results.append(_map_vacancy(item, idx))
-                idx += 1
-            except Exception as e:
-                logger.warning("Failed to map vacancy %s: %s", hh_id, e)
-
-    results = dedup_vacancies(results)
-    logger.info("hh.ru: fetched %d vacancies after dedup", len(results))
-    return results
+async def fetch_hh_vacancies_for_role(role: str | None) -> tuple[list[dict], list[str]]:
+    if not role or role == "all":
+        return await fetch_hh_vacancies()
+    text = ROLE_SEARCH_TEXT.get(role, f"junior {role} OR стажировка {role}")
+    params = [
+        {"text": text, "area": "88", "experience": "noExperience", "per_page": "20"},
+        {"text": text, "schedule": "remote", "experience": "noExperience", "per_page": "15"},
+    ]
+    return await _hh_collect(params)

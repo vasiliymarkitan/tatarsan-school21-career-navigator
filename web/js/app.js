@@ -52,6 +52,9 @@ function renderSourceBadge(source) {
   } else if (type === 'hh') {
     cls = 'hh';
     icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v3h4V8h2v8h-2v-3h-4v3z"/></svg>`;
+  } else if (type === 'yandex') {
+    cls = 'yandex';
+    icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.2 15.4h-2.1l-3.4-8.8h2.3l2.2 6.1 2.2-6.1h2.2z"/></svg>`;
   } else {
     cls = 'web';
     icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
@@ -107,7 +110,7 @@ function renderCard(v) {
       <div class="card-footer">
         <div class="card-salary">${escapeHtml(v.salary || 'зарплата не указана')}</div>
         <a href="${escapeHtml(v.url)}" class="card-apply" target="_blank" rel="noopener">
-          ${v.source && v.source.type === 'hh' ? 'На hh.ru' : 'Подробнее'}
+          ${v.url && String(v.url).includes('hh.ru') ? 'На hh.ru' : 'Подробнее'}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
       </div>
@@ -125,7 +128,7 @@ function renderVacancies() {
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <div class="empty-title">${VACANCIES.length ? 'Ничего не найдено' : 'Живых вакансий пока нет'}</div>
-        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Фейковые карточки не подставляем. Обновите страницу после парсинга hh.ru.'}</div>
+        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Выберите роль и нажмите «Найти». Ищем hh.ru и Yandex Search, фейковые карточки не подставляем.'}</div>
       </div>`;
   } else {
     grid.innerHTML = filtered.map(renderCard).join('');
@@ -179,7 +182,7 @@ function renderSources(list) {
   const items = list && list.length ? list : SOURCES;
   grid.innerHTML = items.map(s => `
     <div class="source-item">
-      <div class="source-icon ${escapeHtml(s.type)}">${s.type === 'telegram' ? 'TG' : 'HH'}</div>
+      <div class="source-icon ${escapeHtml(s.type)}">${s.type === 'telegram' ? 'TG' : s.type === 'yandex' ? 'YS' : 'HH'}</div>
       <span>${escapeHtml(s.name)}</span>
     </div>
   `).join('');
@@ -193,7 +196,11 @@ function initFilters() {
       document.querySelectorAll(`[data-filter="${filter}"]`).forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state[filter] = value;
-      renderVacancies();
+      if (filter === 'role') {
+        fetchVacanciesFromApi({ role: value });
+      } else {
+        renderVacancies();
+      }
     });
   });
 
@@ -204,7 +211,7 @@ function initFilters() {
       document.querySelectorAll('[data-filter="role"]').forEach(b => {
         b.classList.toggle('active', b.dataset.value === role);
       });
-      renderVacancies();
+      fetchVacanciesFromApi({ role });
       document.getElementById('vacancies').scrollIntoView({ behavior: 'smooth' });
     });
   });
@@ -228,14 +235,14 @@ function initSearch() {
 
   document.querySelector('.search-btn').addEventListener('click', () => {
     state.query = input.value.trim();
-    renderVacancies();
+    fetchVacanciesFromApi({ role: state.role, query: state.query });
     document.getElementById('vacancies').scrollIntoView({ behavior: 'smooth' });
   });
 
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       state.query = input.value.trim();
-      renderVacancies();
+      fetchVacanciesFromApi({ role: state.role, query: state.query });
       document.getElementById('vacancies').scrollIntoView({ behavior: 'smooth' });
     }
   });
@@ -535,9 +542,52 @@ function _showCardsLoading() {
     <div class="empty-state">
       <div class="empty-icon" style="font-size:32px">⏳</div>
       <div class="empty-title">Загружаем вакансии…</div>
-      <div class="empty-sub">Только hh.ru и публичные Telegram-каналы</div>
+      <div class="empty-sub">hh.ru и Yandex Search по публичным вакансиям. Telegram не нужен.</div>
     </div>`;
   if (countEl) countEl.textContent = 'Загружаем…';
+}
+
+function mergeVacancies(incoming) {
+  const map = new Map(VACANCIES.map(v => [v.id, v]));
+  (incoming || []).forEach(v => {
+    if (v && v.id) map.set(v.id, v);
+  });
+  VACANCIES = [...map.values()];
+}
+
+async function fetchVacanciesFromApi({ role, query } = {}) {
+  const params = new URLSearchParams({ limit: '200' });
+  const roleKey = role || state.role;
+  if (roleKey && roleKey !== 'all') params.set('role', roleKey);
+  const q = query !== undefined ? query : state.query;
+  if (q) params.set('q', q);
+  _showCardsLoading();
+  try {
+    const res = await fetch(`/api/live-vacancies?${params.toString()}`);
+    const data = await res.json();
+    mergeVacancies(data.vacancies || []);
+    renderVacancies();
+    initCounters();
+    _showLiveBadge(data.lastUpdate, VACANCIES.length, data.source, data.errors);
+    if (!res.ok && !(data.vacancies || []).length) {
+      const grid = document.getElementById('cardsGrid');
+      const err = (data.errors && data.errors.length) ? data.errors.join('; ') : (data.error || `HTTP ${res.status}`);
+      if (grid) grid.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-title">Поиск не удался</div>
+          <div class="empty-sub">${escapeHtml(err)}</div>
+        </div>`;
+    }
+  } catch (_) {
+    const grid = document.getElementById('cardsGrid');
+    if (grid && !VACANCIES.length) grid.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-title">Не удалось загрузить данные</div>
+        <div class="empty-sub">Проверьте соединение и обновите страницу. Статику не подставляем.</div>
+      </div>`;
+  }
 }
 
 async function loadLiveData() {

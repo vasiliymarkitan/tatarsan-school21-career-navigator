@@ -2,18 +2,20 @@
 
 ИИ-дайджест стажировок и junior-вакансий для участников Школы 21 и начинающих IT-специалистов Татарстана.
 
-Сервис **реально** опрашивает hh.ru и четыре публичных Telegram-канала, снимает дубли и не подставляет статичные «демо-карточки». Персональный дайджест уходит в Telegram. MAX не подключён и не обещается.
+Сервис **реально** опрашивает hh.ru Public API и Yandex Search API (страницы вакансий, в запросе `site:hh.ru`), плюс четыре публичных Telegram-канала для новостей. Дубли снимаются, статичные «демо-карточки» не подставляются. Поиск вакансий по роли работает без входа. Персональный дайджест в Telegram опционален. MAX не подключён и не обещается.
 
 ## Что честно работает
 
-- Вакансии: публичный API hh.ru (Татарстан `area=88` + remote junior/стажировки).
+- Вакансии: публичный API hh.ru (Татарстан `area=88` + remote junior/стажировки) **и** Yandex Cloud Search API v2 (`POST /v2/web/search`) по запросам junior/стажировка + Казань/Татарстан/Иннополис/удалёнка РФ.
+- Анонимный поиск: выберите роль (backend/frontend/data/devops/mobile) и нажмите «Найти». Telegram не нужен. Если кэш пуст, сервер ищет сразу, не ждёт 30-минутный цикл.
+- Карточка только при живом `http(s)` URL из выдачи. Компания и зарплата — только если они уже есть в заголовке/сниппете. Источник: `Yandex Search → hh.ru`, не выдуманный сайт.
 - Новости: HTML-превью `t.me/s/kazanit`, `it_tatarstan`, `innopolis_live`, `school21_kazan`.
 - Дедуп: id, URL, пара «компания + название», близкие заголовки одной компании.
-- Авторизация: Telegram Login Widget → httpOnly JWT. Слабый/пустой `JWT_SECRET` сессии не выдаёт.
-- Дайджест: сохранение расписания + ручная отправка + планировщик по МСК. Email нет.
+- Авторизация: Telegram Login Widget → httpOnly JWT. Слабый/пустой `JWT_SECRET` сессии не выдаёт. На просмотр вакансий не влияет.
+- Дайджест: сохранение расписания + ручная отправка + планировщик по МСК. Email нет. Если бот не настроен — так и пишем.
 - LLM на демо: **YandexGPT Lite (AI Studio)**. GigaChat оставлен переключаемым (`LLM_PROVIDER=gigachat`).
 
-Если источник молчит, API отдаёт пустой список и ошибку источника — не фейковые вакансии.
+Если и hh.ru, и Yandex Search падают, `GET /api/live-vacancies?role=…` отвечает **503**, а `/api/health` кладёт текст в `fetch_error` и `errors[]`. Пустой успешный ответ API — это «ничего не нашли», а не скрытый 403.
 
 ## Быстрый старт (локально)
 
@@ -41,6 +43,8 @@ uvicorn api_server:app --reload --port 8000
 cp .env.example .env
 # обязателен JWT_SECRET; для дайджеста — TELEGRAM_BOT_TOKEN и BOT_USERNAME
 # для AI на демо — YANDEX_API_KEY, YANDEX_FOLDER_ID, LLM_PROVIDER=yandex
+# поиск вакансий: тот же ключ, если у него есть yc.search-api.execute;
+# иначе YANDEX_SEARCH_API_KEY + роль search-api.webSearch.user
 docker compose up --build -d
 ```
 
@@ -79,8 +83,10 @@ docker compose up --build -d
 | `TELEGRAM_BOT_TOKEN` | для входа и дайджеста | токен @BotFather |
 | `BOT_USERNAME` | для виджета | username без `@` |
 | `LLM_PROVIDER` | нет | `yandex` (по умолчанию) или `gigachat` |
-| `YANDEX_API_KEY` | для AI на демо | API-ключ AI Studio |
-| `YANDEX_FOLDER_ID` | для AI на демо | folder id, модель `gpt://<folder>/yandexgpt-lite/latest` |
+| `YANDEX_API_KEY` | для AI и поиска | API-ключ. Для GPT — scope языковых моделей; для поиска вакансий — ещё `yc.search-api.execute` |
+| `YANDEX_FOLDER_ID` | для AI и поиска | folder id (`b1g…`), модель `gpt://<folder>/yandexgpt-lite/latest` |
+| `YANDEX_SEARCH_API_KEY` | нет | отдельный ключ Search API, если `YANDEX_API_KEY` не умеет поиск. Не выдумывать и не коммитить |
+| `YANDEX_SEARCH_API_URL` | нет | по умолчанию `https://searchapi.api.cloud.yandex.net` |
 | `YANDEX_MODEL` | нет | по умолчанию `yandexgpt-lite` |
 | `YANDEX_API_BASE` | нет | `https://ai.api.cloud.yandex.net/v1` |
 | `GIGACHAT_CREDENTIALS` | только если `LLM_PROVIDER=gigachat` | ключ Сбера |
@@ -91,7 +97,7 @@ docker compose up --build -d
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/api/live-vacancies` | Живые вакансии hh.ru после дедупа |
+| GET | `/api/live-vacancies` | Живые вакансии. `?role=backend` при пустом кэше сразу ищет hh.ru + Yandex Search |
 | GET | `/api/live-news` | Живые посты Telegram |
 | GET | `/api/sources` | Только реально опрашиваемые источники |
 | GET | `/api/stats` | Счётчики по кэшу, без статики |
@@ -121,8 +127,29 @@ CI: `.github/workflows/ci.yml` гоняет тот же набор на Python 3
 
 - Мессенджер MAX — не реализован и не обещается.
 - Email-дайджест — не реализован.
-- Парсинг карьерных сайтов компаний — в источниках не числится, пока его нет.
+- Парсинг карьерных сайтов компаний — в источниках не числится, пока его нет. Если Yandex вернул URL SuperJob/Habr Career, карточка помечается `Yandex Search → <хост>`, сам сайт в список источников не добавляется.
+- Инструмент Web Search у агента AI Studio (модель сама вызывает tool) ≠ сырой Search API. Карточки строим из Search API + XML, не из ответа модели.
 - `main.py` — старый каркас aiogram-бота без модулей `db/` / `bot/`. Рабочий путь — FastAPI + compose.
+
+## Yandex Search API (демо на VPS)
+
+Документация: [Search API concepts](https://aistudio.yandex.ru/docs/ru/search-api/concepts/), [quickstart](https://aistudio.yandex.ru/docs/ru/search-api/).  
+Схема запроса — официальный proto `WebSearchRequest` / `WebSearchResponse` в [cloudapi search_service.proto](https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/searchapi/v2/search_service.proto). Python SDK семейства `yandex-cloud-ml-sdk` / `yandex-ai-studio-sdk` тот же API; в сервисе зовём REST напрямую, чтобы CI мокал HTTP.
+
+**Синхронный текст:** `POST https://searchapi.api.cloud.yandex.net/v2/web/search`  
+**Отложенный:** `POST …/v2/web/searchAsync` (Operation + poll) — для демо не используем.
+
+Тело (поля proto, JSON camelCase): `query.searchType`, `query.queryText` (≤400), `query.familyMode`, `query.page`, `groupSpec.{groupMode,groupsOnPage,docsInGroup}`, `maxPassages` (1–5), `l10n`, `folderId`, `responseFormat=FORMAT_XML`, `userAgent`. `region` не подставляем — id региона не угадываем, география в `queryText` (`Казань|Татарстан|Иннополис` / удалёнка РФ) плюс операторы `site:` и `lang:ru`.
+
+Ответ текстового поиска: `{ "rawData": "<base64 XML или HTML>" }`. Это **не** JSON `{title,url,snippet}`. Парсим XML: `<doc>` → `<url>`, `<title>`, `<passages>` / `<headline>`. Готовый JSON есть у image search by image, не у `/v2/web/search`.
+
+Auth: `Authorization: Api-Key <YANDEX_API_KEY>`, `folderId` в теле. IAM `Bearer` — запасной путь (`YANDEX_IAM_TOKEN`). К каталогу должен быть привязан биллинг-аккаунт, иначе запросы не пойдут. Документация AI Studio: ключ студии уже может нести нужные роли.
+
+Если всё же 401/403 — честный `errors[]` / HTTP 503, без фейковых карточек. Тогда на сервисе:
+
+1. Роль `search-api.webSearch.user` и/или `search-api.executor`
+2. Scope ключа `yc.search-api.execute`
+3. При отдельном ключе — `YANDEX_SEARCH_API_KEY` только на VPS, не в git
 
 ## Структура
 
@@ -132,9 +159,10 @@ auth_utils.py          JWT + проверка Telegram
 ai/provider.py         фасад LLM (yandex | gigachat)
 ai/yandex.py           YandexGPT Lite / AI Studio
 ai/giga.py             GigaChat, переключаемый
-parser/hh_parser.py    hh.ru
-parser/tg_parser.py    t.me/s/
-parser/dedup.py        дедуп вакансий и новостей
+parser/hh_parser.py        hh.ru (ошибки HTTP больше не глотаются)
+parser/yandex_search.py    Yandex Search API v2 → карточки с живым URL
+parser/tg_parser.py        t.me/s/
+parser/dedup.py            дедуп вакансий и новостей
 digest/                настройки, превью, Bot API, планировщик
 web/                   статичный фронт
 docker-compose.yml     nginx :8083 → app :8000

@@ -68,7 +68,7 @@ def vacancy_identity_keys(item: dict) -> tuple[str, ...]:
 def _source_rank(item: dict) -> int:
     source_type = str((item.get("source") or {}).get("type") or "")
     # Prefer a first-party page over an aggregator copy of the same role.
-    return {"website": 0, "telegram": 1, "hh": 2}.get(source_type, 3)
+    return {"website": 0, "telegram": 1, "hh": 2, "yandex": 3}.get(source_type, 4)
 
 
 def is_near_duplicate(left: dict, right: dict, threshold: float = 0.75) -> bool:
