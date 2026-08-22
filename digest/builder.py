@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from parser.geo import prefer_tatarstan, scope_default_stream
+
 
 def _matches_roles(item: dict, roles: Iterable[str]) -> bool:
     wanted = {role for role in roles if role}
@@ -19,7 +21,8 @@ def build_digest(
     roles: list[str],
     limit: int = 5,
 ) -> dict[str, Any]:
-    matched = [item for item in vacancies if _matches_roles(item, roles)]
+    scoped = prefer_tatarstan(scope_default_stream(vacancies))
+    matched = [item for item in scoped if _matches_roles(item, roles)]
     top = matched[:limit]
     headlines = news[:3]
     return {

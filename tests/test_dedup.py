@@ -47,3 +47,11 @@ def test_news_dedup_by_url_and_title():
 def test_normalize_and_similarity_helpers():
     assert normalize_text("Ёлка, Junior!") == "елка junior"
     assert title_similarity("Junior Python Developer", "Python Developer Junior") > 0.7
+
+
+def test_near_duplicate_without_company():
+    items = [
+        {"id": "a", "title": "Junior Python Developer Казань", "company": "", "url": "https://hh.ru/vacancy/1", "source": {"type": "yandex"}, "dateSort": 1},
+        {"id": "b", "title": "Python Developer Junior", "company": "", "url": "https://hh.ru/vacancy/2", "source": {"type": "yandex"}, "dateSort": 0},
+    ]
+    assert len(dedup_vacancies(items)) == 1

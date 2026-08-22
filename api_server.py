@@ -41,6 +41,7 @@ from digest import scheduler as digest_scheduler
 from digest import store as digest_store
 from digest import telegram as digest_telegram
 from parser.dedup import dedup_news, dedup_vacancies
+from parser.geo import matches_location, prefer_tatarstan, scope_default_stream
 from parser.hh_parser import fetch_hh_vacancies_for_role
 from parser.tg_parser import CHANNELS, fetch_tg_news
 from parser import yandex_search
@@ -90,7 +91,6 @@ _cache: dict = {
 }
 
 _TELEGRAM_BLANK_RE = re.compile(r"^telegram(?:\s+@?[\w_]+)?\s*:\s*$", re.I)
-_RT_HINTS = ("казан", "татарстан", "иннополис", "альметьев", "набережн")
 
 
 def _last_update_label() -> str:
@@ -167,26 +167,12 @@ def _news_hard_errors(errors: list[str]) -> list[str]:
 
 
 def _prefer_tatarstan(items: list[dict]) -> list[dict]:
-    """Bias live cards toward Kazan / RT / Innopolis. Do not invent or drop jobs."""
+    return prefer_tatarstan(items)
 
-    def rank(item: dict) -> tuple[int, int]:
-        blob = " ".join(
-            [
-                str(item.get("location") or ""),
-                str(item.get("title") or ""),
-                str(item.get("aiSummary") or ""),
-            ]
-        ).lower()
-        if any(hint in blob for hint in _RT_HINTS):
-            region = 0
-        elif "москв" in blob:
-            region = 2
-        else:
-            region = 1
-        date_sort = item.get("dateSort")
-        return (region, int(date_sort) if date_sort is not None else 99)
 
-    return sorted(items, key=rank)
+def _top_day_vacancies(limit: int = 5) -> list[dict]:
+    """Numbered daily digest slice from the live cache. Never invent cards."""
+    return prefer_tatarstan(scope_default_stream(list(_cache["vacancies"])))[:limit]
 
 
 def _cache_has_role(role: Optional[str]) -> bool:
@@ -207,7 +193,7 @@ async def _ingest_role(role: Optional[str]) -> tuple[list[dict], list[str]]:
     )
     hh_items, hh_errors = _unpack_fetch(hh_out, "hh.ru")
     ys_items, ys_errors = _unpack_fetch(ys_out, "Yandex Search")
-    merged = dedup_vacancies(list(hh_items) + list(ys_items))
+    merged = scope_default_stream(dedup_vacancies(list(hh_items) + list(ys_items)))
     return merged, hh_errors + ys_errors
 
 
@@ -348,7 +334,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Карьерный Навигатор 21 API", version="2.2.0", lifespan=lifespan)
+app = FastAPI(title="Карьерный Навигатор 21 API", version="2.3.0", lifespan=lifespan)
 
 
 class CareerAdviceRequest(BaseModel):
@@ -380,7 +366,7 @@ class DigestSettingsIn(BaseModel):
     roles: List[str] = Field(default_factory=list)
 
 
-def _vacancy_payload(category, role, fmt, q, limit, offset):
+def _vacancy_payload(category, role, fmt, q, location, limit, offset):
     data = list(_cache["vacancies"])
     if category and category != "all":
         data = [v for v in data if v.get("category") == category]
@@ -396,6 +382,10 @@ def _vacancy_payload(category, role, fmt, q, limit, offset):
             if q_lower
             in (v.get("title", "") + " " + v.get("company", "") + " " + " ".join(v.get("tags", []))).lower()
         ]
+    if location and location != "all":
+        data = [v for v in data if matches_location(v, location)]
+    else:
+        data = scope_default_stream(data)
     data = _prefer_tatarstan(data)
     total = len(data)
     return {
@@ -406,6 +396,7 @@ def _vacancy_payload(category, role, fmt, q, limit, offset):
         "source": "live" if _cache["last_update"] else "empty",
         "live": bool(_cache["vacancies"]),
         "errors": list(_cache["source_errors"]),
+        "topDay": _top_day_vacancies(5),
     }
 
 
@@ -420,6 +411,7 @@ async def get_live_vacancies(
     role: Optional[str] = Query(None),
     format: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    location: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
 ):
@@ -428,14 +420,46 @@ async def get_live_vacancies(
         role_key = None
     if not _cache_has_role(role_key):
         _items, errors, _attempted = await _ensure_role_vacancies(role_key)
-        payload = _vacancy_payload(category, role, format, q, limit, offset)
+        payload = _vacancy_payload(category, role, format, q, location, limit, offset)
         payload["errors"] = list(errors)
         if not payload["vacancies"] and errors:
             payload["live"] = False
             payload["source"] = "error"
             return JSONResponse(payload, status_code=503)
         return JSONResponse(payload)
-    return JSONResponse(_vacancy_payload(category, role, format, q, limit, offset))
+    return JSONResponse(_vacancy_payload(category, role, format, q, location, limit, offset))
+
+
+@app.get("/api/top-day")
+async def get_top_day(limit: int = Query(5, le=10)):
+    """Топ-5 за день from the live cache. Empty cache is honest, never invented."""
+    if not _cache["vacancies"]:
+        _items, errors, _attempted = await _ensure_role_vacancies(None)
+        items = _top_day_vacancies(limit)
+        payload = {
+            "title": "Топ-5 за день",
+            "vacancies": items,
+            "total": len(items),
+            "lastUpdate": _last_update_label(),
+            "source": "live" if items else ("error" if errors else "empty"),
+            "live": bool(items),
+            "errors": list(errors),
+        }
+        if not items and errors:
+            return JSONResponse(payload, status_code=503)
+        return JSONResponse(payload)
+    items = _top_day_vacancies(limit)
+    return JSONResponse(
+        {
+            "title": "Топ-5 за день",
+            "vacancies": items,
+            "total": len(items),
+            "lastUpdate": _last_update_label(),
+            "source": "live" if items else "empty",
+            "live": bool(items),
+            "errors": list(_cache["source_errors"]),
+        }
+    )
 
 
 @app.get("/api/live-news")
@@ -688,7 +712,17 @@ async def ai_agent_advice(req: CareerAdviceRequest):
             },
             status_code=503,
         )
-    result = await llm.run_career_agent(req.role or "", req.skills or "", req.goals or "")
+    role_key = (req.role or "").strip().lower() or None
+    if role_key == "all":
+        role_key = None
+    items, _errors, _attempted = await _ensure_role_vacancies(role_key)
+    cached = scope_default_stream(items)
+    result = await llm.run_career_agent(
+        req.role or "",
+        req.skills or "",
+        req.goals or "",
+        vacancies=cached,
+    )
     return JSONResponse(result)
 
 
@@ -713,10 +747,19 @@ async def get_vacancies_legacy(
     role: Optional[str] = Query(None),
     format: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    location: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
 ):
-    return await get_live_vacancies(category=category, role=role, format=format, q=q, limit=limit, offset=offset)
+    return await get_live_vacancies(
+        category=category,
+        role=role,
+        format=format,
+        q=q,
+        location=location,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.get("/api/news")

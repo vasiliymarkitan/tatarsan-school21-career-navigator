@@ -17,6 +17,22 @@ _TITLE_NOISE = (
     "стажировка",
     "intern",
     "internship",
+    "developer",
+    "разработчик",
+    "программист",
+    "инженер",
+    "engineer",
+    "казань",
+    "казани",
+    "иннополис",
+    "москва",
+    "москве",
+    "удаленно",
+    "удалённо",
+    "удаленная",
+    "удалённая",
+    "remote",
+    "офис",
 )
 
 
@@ -74,9 +90,13 @@ def _source_rank(item: dict) -> int:
 def is_near_duplicate(left: dict, right: dict, threshold: float = 0.75) -> bool:
     left_company = normalize_text(str(left.get("company") or ""))
     right_company = normalize_text(str(right.get("company") or ""))
-    if not left_company or left_company != right_company:
-        return False
-    return title_similarity(str(left.get("title") or ""), str(right.get("title") or "")) >= threshold
+    score = title_similarity(str(left.get("title") or ""), str(right.get("title") or ""))
+    if left_company and right_company:
+        return left_company == right_company and score >= threshold
+    # Yandex hits often have no company — still collapse near-identical titles.
+    if not left_company and not right_company:
+        return score >= max(threshold, 0.8)
+    return False
 
 
 def dedup_vacancies(items: Iterable[dict], threshold: float = 0.75) -> list[dict]:

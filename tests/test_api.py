@@ -351,17 +351,27 @@ def test_live_news_does_not_inherit_hh_or_blank_telegram(client, monkeypatch):
     assert not any(err.rstrip().endswith(":") for err in body["errors"])
 
 
-def test_default_vacancy_grid_prefers_tatarstan_over_moscow(client):
+def test_default_vacancy_grid_drops_moscow_office_keeps_remote(client):
     api_server._cache["vacancies"] = [
         {
-            "id": "msk",
-            "title": "Стажёр Python",
+            "id": "msk_office",
+            "title": "Стажёр Python, Москва",
             "company": "X",
             "location": "Москва",
             "category": "internship",
             "role": "backend",
             "format": "office",
             "tags": [],
+        },
+        {
+            "id": "msk_remote",
+            "title": "Junior Python remote",
+            "company": "Y",
+            "location": "Москва",
+            "category": "vacancy",
+            "role": "backend",
+            "format": "remote",
+            "tags": ["remote"],
         },
         {
             "id": "kzn",
@@ -376,7 +386,170 @@ def test_default_vacancy_grid_prefers_tatarstan_over_moscow(client):
     ]
     api_server._cache["last_update"] = datetime.now(timezone.utc)
     data = client.get("/api/live-vacancies").json()
-    assert [row["id"] for row in data["vacancies"]] == ["kzn", "msk"]
+    ids = [row["id"] for row in data["vacancies"]]
+    assert "kzn" in ids
+    assert "msk_remote" in ids
+    assert "msk_office" not in ids
+    assert ids[0] == "kzn"
+    assert [row["id"] for row in data["topDay"]] == ids[:5]
+
+
+def test_live_vacancies_location_param(client):
+    api_server._cache["vacancies"] = [
+        {
+            "id": "kzn",
+            "title": "Junior Python",
+            "company": "ICL",
+            "location": "Казань",
+            "category": "vacancy",
+            "role": "backend",
+            "format": "office",
+            "tags": [],
+        },
+        {
+            "id": "inn",
+            "title": "Стажёр frontend",
+            "company": "U",
+            "location": "Иннополис",
+            "category": "internship",
+            "role": "frontend",
+            "format": "office",
+            "tags": [],
+        },
+    ]
+    api_server._cache["last_update"] = datetime.now(timezone.utc)
+    kazan = client.get("/api/live-vacancies", params={"location": "Казань"}).json()
+    assert [row["id"] for row in kazan["vacancies"]] == ["kzn"]
+    innopolis = client.get("/api/live-vacancies", params={"location": "Иннополис"}).json()
+    assert [row["id"] for row in innopolis["vacancies"]] == ["inn"]
+
+
+def test_top_day_from_live_cache(client):
+    api_server._cache["vacancies"] = [
+        {
+            "id": f"v{i}",
+            "title": f"Junior {i} Казань",
+            "company": "ICL",
+            "location": "Казань",
+            "category": "vacancy",
+            "role": "backend",
+            "format": "office",
+            "dateSort": i,
+            "url": f"https://hh.ru/vacancy/{i}",
+            "tags": [],
+        }
+        for i in range(8)
+    ] + [
+        {
+            "id": "msk_office",
+            "title": "Стажёр, Москва",
+            "company": "X",
+            "location": "Москва",
+            "category": "internship",
+            "role": "backend",
+            "format": "office",
+            "dateSort": 0,
+            "url": "https://hh.ru/vacancy/999",
+            "tags": [],
+        }
+    ]
+    api_server._cache["last_update"] = datetime.now(timezone.utc)
+    data = client.get("/api/top-day").json()
+    assert data["title"] == "Топ-5 за день"
+    assert len(data["vacancies"]) == 5
+    assert all(row["id"] != "msk_office" for row in data["vacancies"])
+    assert all("http" in (row.get("url") or "") for row in data["vacancies"])
+    assert "Contoso" not in str(data)
+
+
+def test_agent_advice_uses_live_cache_not_hh(client, monkeypatch):
+    api_server._cache["vacancies"] = [
+        {
+            "id": "kzn",
+            "title": "Junior Python",
+            "company": "ICL",
+            "location": "Казань",
+            "category": "vacancy",
+            "role": "backend",
+            "format": "office",
+            "url": "https://hh.ru/vacancy/1",
+            "tags": ["python"],
+        },
+        {
+            "id": "msk_office",
+            "title": "Стажёр Python, Москва",
+            "company": "X",
+            "location": "Москва",
+            "category": "internship",
+            "role": "backend",
+            "format": "office",
+            "url": "https://hh.ru/vacancy/2",
+            "tags": [],
+        },
+    ]
+    api_server._cache["last_update"] = datetime.now(timezone.utc)
+    monkeypatch.setattr(api_server.llm, "is_enabled", lambda: True)
+
+    hh_calls = {"n": 0}
+
+    async def boom(*_args, **_kwargs):
+        hh_calls["n"] += 1
+        raise AssertionError("agent must not call hh.ru")
+
+    monkeypatch.setattr("parser.hh_parser.fetch_vacancies_by_query", boom)
+
+    async def fake_run(role, skills, goals, vacancies=None):
+        assert vacancies is not None
+        ids = [item["id"] for item in vacancies]
+        assert "kzn" in ids
+        assert "msk_office" not in ids
+        return {
+            "advice": "разбор кэша",
+            "vacancies": [item for item in vacancies if item["id"] == "kzn"][:5],
+            "steps": [{"step": "act", "tool": "live_cache", "found": 1}],
+            "agent": "YandexGPT Lite",
+            "vacancies_source": "live_cache",
+        }
+
+    monkeypatch.setattr(api_server.llm, "run_career_agent", fake_run)
+    response = client.post("/api/ai/agent-advice", json={"role": "backend", "skills": "Python"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["vacancies"][0]["id"] == "kzn"
+    assert body["vacancies"][0]["url"] == "https://hh.ru/vacancy/1"
+    assert body["vacancies_source"] == "live_cache"
+    assert hh_calls["n"] == 0
+    assert "Contoso" not in str(body)
+
+
+def test_agent_advice_empty_cache_is_honest(client, monkeypatch):
+    monkeypatch.setattr(api_server.llm, "is_enabled", lambda: True)
+
+    async def empty_hh(role=None):
+        return [], ["hh.ru: HTTP 403 forbidden"]
+
+    async def empty_ys(role=None):
+        return [], []
+
+    async def fake_run(role, skills, goals, vacancies=None):
+        assert vacancies == []
+        return {
+            "advice": "В живом кэше сейчас нет подходящих карточек.",
+            "vacancies": [],
+            "steps": [{"step": "act", "tool": "live_cache", "found": 0}],
+            "agent": "YandexGPT Lite",
+            "vacancies_source": "cache_empty",
+        }
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", empty_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", empty_ys)
+    monkeypatch.setattr(api_server.llm, "run_career_agent", fake_run)
+    response = client.post("/api/ai/agent-advice", json={"role": "backend"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["vacancies"] == []
+    assert body["vacancies_source"] == "cache_empty"
+    assert "Contoso" not in body["advice"]
 
 
 def test_no_fake_register_endpoint(client):
