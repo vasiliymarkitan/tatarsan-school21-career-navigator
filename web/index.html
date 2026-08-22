@@ -30,7 +30,6 @@
         <a href="#top5" class="nav-link" data-section="top5">Топ-5</a>
         <a href="#agent" class="nav-link" data-section="agent">Агент</a>
         <a href="#news" class="nav-link" data-section="news">IT-новости</a>
-        <a href="#sources" class="nav-link">Источники</a>
       </nav>
 
       <div class="header-actions">
@@ -53,7 +52,7 @@
     <div class="hero-inner">
       <div class="hero-tag" id="heroTag">
         <span class="pulse"></span>
-        <span id="heroTagText">Загружаем живые источники…</span>
+        <span id="heroTagText">Собираем свежие вакансии…</span>
       </div>
       <h1 class="hero-title">
         Стажировки и <span class="accent">первая работа</span><br>
@@ -61,8 +60,8 @@
         и удалёнка по РФ
       </h1>
       <p class="hero-subtitle">
-        Живые junior-вакансии и стажировки: hh.ru и Yandex Search по Казани, Татарстану и удалёнке РФ.
-        Роль не обязательна — вход через Telegram не нужен. Фейковых карточек нет.
+        Стажировки и первые вакансии в IT: Казань, Иннополис, Татарстан и удалёнка по России.
+        Смотреть можно без входа — направление выбирать не обязательно.
       </p>
 
       <div class="search-wrap">
@@ -124,7 +123,7 @@
       <div class="digest-icon">📬</div>
       <div class="digest-text">
         <strong>Персональный дайджест в Telegram</strong>
-        <span>После входа через Telegram можно сохранить расписание и получить живую подборку. Email и MAX не подключены.</span>
+        <span>Войдите через Telegram — и подборка вакансий будет приходить по вашему расписанию.</span>
       </div>
       <button class="btn btn-primary btn-sm" id="digestBannerBtn">Настроить дайджест</button>
     </div>
@@ -137,11 +136,11 @@
     <div class="section-header">
       <div>
         <h2 class="section-title">Топ-5 за день</h2>
-        <p class="section-sub">Живые junior/стажировки из кэша: Татарстан и удалёнка РФ. Без выдуманных карточек.</p>
+        <p class="section-sub">Пять свежих стажировок и junior-вакансий: Татарстан и удалёнка по России.</p>
       </div>
     </div>
     <ol class="top5-list" id="top5List">
-      <li class="top5-empty">Загружаем топ-5 из живого кэша…</li>
+      <li class="top5-empty">Загружаем топ-5 за день…</li>
     </ol>
   </div>
 </section>
@@ -235,7 +234,7 @@
     <div class="section-header">
       <div>
         <h2 class="section-title"><span class="agent-badge">AI</span>Карьерный агент</h2>
-        <p class="section-sub">План → живой кэш вакансий → разбор найденных карточек. Без живых вакансий агент не подставляет фейки.</p>
+        <p class="section-sub">Расскажите, что ищете — подберём вакансии и коротко прокомментируем.</p>
       </div>
     </div>
     <div class="agent-layout">
@@ -261,20 +260,20 @@
         </div>
         <button class="btn btn-primary btn-full" id="agentRunBtn" type="button">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-          Запустить агента
+          Подобрать вакансии
         </button>
         <div class="agent-steps" id="agentSteps" style="display:none">
-          <div class="agent-step" id="stepPlan"><span class="step-icon">1</span><span class="step-label">PLAN</span><span class="step-status" id="stepPlanStatus">ожидание</span></div>
+          <div class="agent-step" id="stepPlan"><span class="step-icon">1</span><span class="step-label">Запрос</span><span class="step-status" id="stepPlanStatus">ожидание</span></div>
           <div class="agent-step-arrow">↓</div>
-          <div class="agent-step" id="stepAct"><span class="step-icon">2</span><span class="step-label">ACT · кэш</span><span class="step-status" id="stepActStatus">ожидание</span></div>
+          <div class="agent-step" id="stepAct"><span class="step-icon">2</span><span class="step-label">Подборка</span><span class="step-status" id="stepActStatus">ожидание</span></div>
           <div class="agent-step-arrow">↓</div>
-          <div class="agent-step" id="stepVerify"><span class="step-icon">3</span><span class="step-label">VERIFY</span><span class="step-status" id="stepVerifyStatus">ожидание</span></div>
+          <div class="agent-step" id="stepVerify"><span class="step-icon">3</span><span class="step-label">Рекомендации</span><span class="step-status" id="stepVerifyStatus">ожидание</span></div>
         </div>
       </div>
       <div class="agent-results" id="agentResults" style="display:none">
         <div class="agent-vacancies" id="agentVacancies"></div>
         <div class="agent-advice-card">
-          <div class="agent-advice-header">Рекомендации модели</div>
+          <div class="agent-advice-header">Что советуем</div>
           <div class="agent-advice-text" id="agentAdviceText"></div>
         </div>
       </div>
@@ -288,21 +287,10 @@
     <div class="section-header">
       <div>
         <h2 class="section-title">IT-новости Татарстана</h2>
-        <p class="section-sub">Yandex Search по четырём назначенным каналам (url:t.me/&lt;канал&gt;/*). Без статичных карточек и чужих сайтов.</p>
+        <p class="section-sub">Коротко о событиях IT в Казани, Иннополисе и Школе 21.</p>
       </div>
     </div>
     <div class="news-grid" id="newsGrid">
-      <!-- Rendered by JS -->
-    </div>
-  </div>
-</section>
-
-<!-- ===== SOURCES ===== -->
-<section class="sources-section" id="sources">
-  <div class="container">
-    <h2 class="section-title-center">Источники данных</h2>
-    <p class="section-sub-center">hh.ru Public API, Yandex Search (site:hh.ru и site:t.me/&lt;канал&gt;) и четыре назначенных Telegram-канала. Сайты компаний, которых нет в выдаче, не показываем.</p>
-    <div class="sources-grid">
       <!-- Rendered by JS -->
     </div>
   </div>
@@ -327,7 +315,7 @@
           <a href="#vacancies">Вакансии</a>
           <a href="#vacancies">Стажировки</a>
           <a href="#news">IT-новости</a>
-          <a href="#sources">Источники</a>
+          <a href="#top5">Топ-5</a>
         </div>
         <div class="footer-col">
           <span class="footer-col-title">Сервис</span>
@@ -342,7 +330,7 @@
     </div>
     <div class="footer-bottom">
       <span>© 2026 Карьерный Навигатор 21 · Школа 21</span>
-      <span>Данные с hh.ru, Yandex Search и t.me/s/ · без фейковых карточек</span>
+      <span>Вакансии с hh.ru · новости IT Татарстана</span>
     </div>
   </div>
 </footer>
@@ -435,7 +423,7 @@
     </div>
 
     <p class="tg-auth-note" style="max-width:none;text-align:left">
-      Канал один: Telegram. Email и MAX не подключены. После сохранения напишите боту /start — иначе Bot API не доставит сообщение.
+      Подборка приходит в Telegram по выбранному расписанию.
     </p>
     <p class="tg-auth-hint" id="digestStatus"></p>
     <button class="btn btn-primary btn-full" id="digestSaveBtn" type="button">Сохранить настройки</button>

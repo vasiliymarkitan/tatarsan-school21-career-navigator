@@ -1,13 +1,12 @@
 // Live data comes from the API. This file only holds empty defaults
-// and the list of sources that the backend actually polls.
+// and a short source count for the stats strip.
 let VACANCIES = [];
 let NEWS = [];
 
 const SOURCES = [
-  { type: "hh", name: "hh.ru", desc: "Публичный API вакансий, area=88 + remote" },
-  { type: "yandex", name: "Yandex Search → hh.ru", desc: "Search API v2, запросы site:hh.ru" },
-  { type: "telegram", name: "@kazanit", desc: "Yandex Search url:t.me/kazanit/*" },
-  { type: "telegram", name: "@it_tatarstan", desc: "Yandex Search url:t.me/it_tatarstan/*" },
-  { type: "telegram", name: "@innopolis_live", desc: "Yandex Search url:t.me/innopolis_live/*" },
-  { type: "telegram", name: "@school21_kazan", desc: "Yandex Search url:t.me/school21_kazan/*" },
+  { type: "hh", name: "hh.ru", desc: "Вакансии" },
+  { type: "telegram", name: "@kazanit", desc: "Новости" },
+  { type: "telegram", name: "@it_tatarstan", desc: "Новости" },
+  { type: "telegram", name: "@innopolis_live", desc: "Новости" },
+  { type: "telegram", name: "@school21_kazan", desc: "Новости" },
 ];

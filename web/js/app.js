@@ -60,7 +60,21 @@ function renderSourceBadge(source) {
     icon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
   }
 
-  return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener" class="source-badge ${cls}" title="Открыть источник">${icon}${escapeHtml(source.name)}</a>`;
+  return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener" class="source-badge ${cls}" title="Открыть источник">${icon}${escapeHtml(displaySourceName(source))}</a>`;
+}
+
+function displaySourceName(source) {
+  const raw = String((source && source.name) || '').trim();
+  if (!raw) return 'Источник';
+  const sep = raw.indexOf('→');
+  if (sep !== -1) {
+    return raw.slice(sep + 1).trim() || 'hh.ru';
+  }
+  return raw;
+}
+
+function visitorFacingError() {
+  return 'Сейчас не получилось обновить ленту. Попробуйте чуть позже.';
 }
 
 function renderTag(tag) {
@@ -127,8 +141,8 @@ function renderVacancies() {
     grid.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
-        <div class="empty-title">${VACANCIES.length ? 'Ничего не найдено' : 'Живых вакансий пока нет'}</div>
-        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Ищем junior/стажировки Казань · Татарстан · Иннополис и удалёнку РФ на hh.ru и Yandex Search. Фейковые карточки не подставляем.'}</div>
+        <div class="empty-title">${VACANCIES.length ? 'Ничего не найдено' : 'Вакансий пока нет'}</div>
+        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Ищем стажировки и junior в Татарстане и на удалёнке по России. Загляните чуть позже или смените фильтры.'}</div>
       </div>`;
   } else {
     grid.innerHTML = filtered.map(renderCard).join('');
@@ -150,11 +164,11 @@ function renderNews(errors) {
   const grid = document.getElementById('newsGrid');
   if (!NEWS.length) {
     const reason = (errors && errors.length)
-      ? errors.join('; ')
-      : 'Yandex Search и t.me/s по @kazanit, @it_tatarstan, @innopolis_live и @school21_kazan ничего не вернули. Статику не подмешиваем.';
+      ? visitorFacingError(errors.join('; '))
+      : 'Сейчас нет свежих постов. Загляните позже.';
     grid.innerHTML = `
       <article class="news-card">
-        <h3 class="news-title">Новостей из назначенных каналов пока нет</h3>
+        <h3 class="news-title">Свежих новостей пока нет</h3>
         <p class="news-summary">${escapeHtml(reason)}</p>
       </article>`;
     return;
@@ -168,7 +182,7 @@ function renderNews(errors) {
       <p class="news-summary">${escapeHtml(n.summary)}</p>
       <div class="news-footer">
         <div class="news-meta">
-          <a class="news-source ${escapeHtml(n.sourceType || 'telegram')}" href="${escapeHtml(n.url || '#')}" target="_blank" rel="noopener">${escapeHtml(n.source)}</a>
+          <a class="news-source ${escapeHtml(n.sourceType || 'telegram')}" href="${escapeHtml(n.url || '#')}" target="_blank" rel="noopener">${escapeHtml(displaySourceName({ name: n.source }))}</a>
           <span class="news-date">${escapeHtml(n.dateLabel)}</span>
         </div>
         <div class="news-tags">
@@ -176,18 +190,6 @@ function renderNews(errors) {
         </div>
       </div>
     </article>
-  `).join('');
-}
-
-function renderSources(list) {
-  const grid = document.querySelector('.sources-grid');
-  if (!grid) return;
-  const items = list && list.length ? list : SOURCES;
-  grid.innerHTML = items.map(s => `
-    <div class="source-item">
-      <div class="source-icon ${escapeHtml(s.type)}">${s.type === 'telegram' ? 'TG' : s.type === 'yandex' ? 'YS' : 'HH'}</div>
-      <span>${escapeHtml(s.name)}</span>
-    </div>
   `).join('');
 }
 
@@ -303,6 +305,15 @@ function selectedDigestRoles() {
     .filter(Boolean);
 }
 
+function digestUserMessage(text, fallback) {
+  const value = String(text || '').trim();
+  if (!value) return fallback;
+  if (/[A-Z]{3,}_[A-Z0-9_]+/.test(value) || /\bAPI\b/i.test(value)) {
+    return fallback;
+  }
+  return value;
+}
+
 function setDigestStatus(text, isError) {
   const el = document.getElementById('digestStatus');
   if (!el) return;
@@ -332,10 +343,10 @@ async function saveDigestSettings() {
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
-      setDigestStatus(data.error || 'Не удалось сохранить', true);
+      setDigestStatus(digestUserMessage(data.error, 'Не удалось сохранить'), true);
       return;
     }
-    setDigestStatus(data.message || 'Сохранено');
+    setDigestStatus(digestUserMessage(data.message, 'Сохранено'));
   } catch (err) {
     setDigestStatus('Сервер недоступен', true);
   }
@@ -352,10 +363,10 @@ async function sendDigestNow() {
     const res = await fetch('/api/digest/send', { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.success) {
-      setDigestStatus(data.error || 'Не удалось отправить', true);
+      setDigestStatus(digestUserMessage(data.error, 'Не удалось отправить'), true);
       return;
     }
-    setDigestStatus(data.empty ? 'Отправлено: в кэше сейчас пусто, так и написали.' : (data.message || 'Отправлено'));
+    setDigestStatus(data.empty ? 'Отправлено: сейчас подходящих вакансий нет — так и написали в сообщении.' : digestUserMessage(data.message, 'Отправлено'));
   } catch (err) {
     setDigestStatus('Сервер недоступен', true);
   }
@@ -571,7 +582,7 @@ function _showCardsLoading() {
     <div class="empty-state">
       <div class="empty-icon" style="font-size:32px">⏳</div>
       <div class="empty-title">Загружаем вакансии…</div>
-      <div class="empty-sub">hh.ru и Yandex Search по IT Казань / Татарстан. Роль не обязательна.</div>
+      <div class="empty-sub">Собираем стажировки и junior-вакансии по Татарстану и удалёнке.</div>
     </div>`;
   if (countEl) countEl.textContent = 'Загружаем…';
 }
@@ -582,7 +593,7 @@ function _showNewsLoading() {
   grid.innerHTML = `
     <article class="news-card">
       <h3 class="news-title">Загружаем IT-новости Татарстана…</h3>
-      <p class="news-summary">Yandex Search по @kazanit, @it_tatarstan, @innopolis_live и @school21_kazan.</p>
+      <p class="news-summary">Собираем новости IT Татарстана…</p>
     </article>`;
 }
 
@@ -598,7 +609,7 @@ function renderTopDay(items) {
   const list = document.getElementById('top5List');
   if (!list) return;
   if (!items || !items.length) {
-    list.innerHTML = '<li class="top5-empty">В живом кэше пока нет карточек для топ-5. Фейки не подставляем.</li>';
+    list.innerHTML = '<li class="top5-empty">Пока нет топ-5 за день — как появятся свежие вакансии, покажем их здесь.</li>';
     return;
   }
   list.innerHTML = items.map((v, index) => `
@@ -637,7 +648,7 @@ async function fetchVacanciesFromApi({ role, query, location } = {}) {
         <div class="empty-state">
           <div class="empty-icon">⚠️</div>
           <div class="empty-title">Поиск не удался</div>
-          <div class="empty-sub">${escapeHtml(err)}</div>
+          <div class="empty-sub">${escapeHtml(visitorFacingError(err))}</div>
         </div>`;
     }
   } catch (_) {
@@ -646,25 +657,17 @@ async function fetchVacanciesFromApi({ role, query, location } = {}) {
       <div class="empty-state">
         <div class="empty-icon">⚠️</div>
         <div class="empty-title">Не удалось загрузить данные</div>
-        <div class="empty-sub">Проверьте соединение и обновите страницу. Статику не подставляем.</div>
+        <div class="empty-sub">Проверьте соединение и обновите страницу.</div>
       </div>`;
   }
 }
 
 async function loadLiveData() {
   try {
-    const [vacRes, newsRes, srcRes] = await Promise.all([
+    const [vacRes, newsRes] = await Promise.all([
       fetch('/api/live-vacancies?limit=200'),
       fetch('/api/live-news?limit=20'),
-      fetch('/api/sources'),
     ]);
-
-    if (srcRes.ok) {
-      const srcData = await srcRes.json();
-      if (srcData.sources && srcData.sources.length) {
-        renderSources(srcData.sources);
-      }
-    }
 
     const vacData = vacRes.ok || vacRes.status === 503 ? await vacRes.json() : {};
     VACANCIES = vacData.vacancies || [];
@@ -681,7 +684,7 @@ async function loadLiveData() {
         <div class="empty-state">
           <div class="empty-icon">⚠️</div>
           <div class="empty-title">Поиск не удался</div>
-          <div class="empty-sub">${escapeHtml(err)}</div>
+          <div class="empty-sub">${escapeHtml(visitorFacingError(err))}</div>
         </div>`;
     }
 
@@ -694,7 +697,7 @@ async function loadLiveData() {
       <div class="empty-state">
         <div class="empty-icon">⚠️</div>
         <div class="empty-title">Не удалось загрузить данные</div>
-        <div class="empty-sub">Проверьте соединение и обновите страницу. Статику не подставляем.</div>
+        <div class="empty-sub">Проверьте соединение и обновите страницу.</div>
       </div>`;
   }
 }
@@ -703,7 +706,9 @@ function _showLiveBadge(lastUpdate, count, source, errors) {
   const statsBar = document.querySelector('.stats');
   const hero = document.getElementById('heroTagText');
   if (hero) {
-    hero.textContent = `${count} живых вакансий · ${SOURCES.length} источников · ${lastUpdate || 'ещё не обновлялось'}`;
+    hero.textContent = count
+      ? `${count} вакансий · обновлено ${lastUpdate || 'только что'}`
+      : 'Собираем свежие вакансии…';
   }
   if (!statsBar) return;
   let badge = document.getElementById('liveBadge');
@@ -713,9 +718,8 @@ function _showLiveBadge(lastUpdate, count, source, errors) {
     badge.style.cssText = 'text-align:center;padding:6px 0 0;font-size:11px;color:var(--text2);';
     statsBar.insertAdjacentElement('afterend', badge);
   }
-  const err = (errors && errors.length) ? ` · ошибки: ${errors.join('; ')}` : '';
-  const label = source === 'live' ? 'Живые данные' : 'Кэш ещё пуст';
-  badge.innerHTML = `<span style="color:var(--accent)">●</span> ${escapeHtml(label)}: ${count} вакансий · обновлено ${escapeHtml(lastUpdate || 'ещё не обновлялось')}${escapeHtml(err)}`;
+  const label = count ? 'Свежие вакансии' : 'Лента пока пустая';
+  badge.innerHTML = `<span style="color:var(--accent)">●</span> ${escapeHtml(label)}: ${count} · обновлено ${escapeHtml(lastUpdate || 'ещё не обновлялось')}`;
 }
 
 function _setStep(id, status, text) {
@@ -737,11 +741,11 @@ async function runCareerAgent() {
   const resultsEl = document.getElementById('agentResults');
 
   btn.disabled = true;
-  btn.textContent = 'Агент работает…';
+  btn.textContent = 'Подбираем вакансии…';
   stepsEl.style.display = 'flex';
   resultsEl.style.display = 'none';
 
-  _setStep('stepPlan', 'running', 'определяет параметры…');
+  _setStep('stepPlan', 'running', 'читаем запрос…');
   _setStep('stepAct', '', 'ожидание');
   _setStep('stepVerify', '', 'ожидание');
 
@@ -760,14 +764,13 @@ async function runCareerAgent() {
     const verifyStep = steps.find(s => s.step === 'verify');
 
     if (planStep) {
-      const q = planStep.params?.search_query || '';
-      _setStep('stepPlan', 'ok', q ? `"${q.substring(0, 28)}…"` : 'готово');
+      _setStep('stepPlan', 'ok', 'готово');
     }
     if (actStep) {
-      _setStep('stepAct', 'ok', `найдено: ${actStep.found}`);
+      _setStep('stepAct', 'ok', actStep.found ? `нашли: ${actStep.found}` : 'готово');
     }
     if (verifyStep) {
-      _setStep('stepVerify', 'ok', verifyStep.ok ? 'анализ готов' : 'ошибка');
+      _setStep('stepVerify', 'ok', verifyStep.ok ? 'готово' : 'не вышло');
     }
 
     const vacsEl = document.getElementById('agentVacancies');
@@ -786,27 +789,26 @@ async function runCareerAgent() {
       `).join('');
     } else {
       const why = data.vacancies_source === 'cache_empty'
-        ? 'Живой кэш пуст — фейковые вакансии не подставляем'
-        : 'В живом кэше нет карточек под этот запрос — фейковые вакансии не подставляем';
+        ? 'Пока нет подходящих вакансий. Загляните позже.'
+        : 'Под этот запрос вакансий сейчас нет. Попробуйте другое направление.';
       vacsEl.innerHTML = `<p style="color:var(--text2);font-size:13px">${why}</p>`;
     }
 
-    document.getElementById('agentAdviceText').textContent = data.advice || 'Нет ответа от агента';
+    document.getElementById('agentAdviceText').textContent = data.advice || 'Пока нечего добавить.';
     resultsEl.style.display = 'flex';
   } catch (e) {
-    _setStep('stepVerify', '', 'ошибка');
-    document.getElementById('agentAdviceText').textContent = 'Ошибка: ' + e.message;
+    _setStep('stepVerify', '', 'не вышло');
+    document.getElementById('agentAdviceText').textContent = visitorFacingError(e.message);
     document.getElementById('agentResults').style.display = 'flex';
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> Запустить снова`;
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> Подобрать снова`;
   }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   _showCardsLoading();
   _showNewsLoading();
-  renderSources();
   initFilters();
   initSearch();
   initModals();
