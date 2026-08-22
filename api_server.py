@@ -40,7 +40,7 @@ from digest import scheduler as digest_scheduler
 from digest import store as digest_store
 from digest import telegram as digest_telegram
 from parser.dedup import dedup_news, dedup_vacancies
-from parser.hh_parser import fetch_hh_vacancies, fetch_hh_vacancies_for_role
+from parser.hh_parser import fetch_hh_vacancies_for_role
 from parser.tg_parser import CHANNELS, fetch_tg_news
 from parser import yandex_search
 
@@ -76,6 +76,7 @@ REAL_SOURCES = [
 ]
 
 _role_locks: dict[str, asyncio.Lock] = {}
+_news_lock = asyncio.Lock()
 
 _cache: dict = {
     "vacancies": [],
@@ -155,7 +156,7 @@ async def _ingest_role(role: Optional[str]) -> tuple[list[dict], list[str]]:
 
 
 async def _ensure_role_vacancies(role: Optional[str]) -> tuple[list[dict], list[str], bool]:
-    """On-demand search when the cache has no cards for this role."""
+    """On-demand search when the cache has no cards for this role (or no role at all)."""
     key = (role or "all").strip().lower() or "all"
     if _cache_has_role(key if key != "all" else None):
         return list(_cache["vacancies"]), list(_cache["source_errors"]), False
@@ -170,27 +171,46 @@ async def _ensure_role_vacancies(role: Optional[str]) -> tuple[list[dict], list[
         return list(_cache["vacancies"]), list(_cache["source_errors"]), True
 
 
+async def _ingest_news() -> tuple[list[dict], list[str]]:
+    """t.me/s preview (if reachable) + Yandex Search over the same four channels."""
+    tg_out, ys_out = await asyncio.gather(
+        fetch_tg_news(),
+        yandex_search.fetch_yandex_news(),
+        return_exceptions=True,
+    )
+    tg_items, tg_errors = _unpack_fetch(tg_out, "telegram")
+    ys_items, ys_errors = _unpack_fetch(ys_out, "Yandex Search")
+    merged = dedup_news(list(tg_items) + list(ys_items))
+    merged.sort(key=lambda item: item.get("dateSort", 99))
+    return merged[:20], tg_errors + ys_errors
+
+
+async def _ensure_news() -> tuple[list[dict], list[str], bool]:
+    """On-demand news search when the cache is still empty."""
+    if _cache["news"]:
+        return list(_cache["news"]), list(_cache["source_errors"]), False
+
+    async with _news_lock:
+        if _cache["news"]:
+            return list(_cache["news"]), list(_cache["source_errors"]), False
+        items, errors = await _ingest_news()
+        _cache["news"] = items
+        _cache["last_update"] = datetime.now(timezone.utc)
+        _store_errors(list(_cache["source_errors"]) + errors)
+        return list(_cache["news"]), list(_cache["source_errors"]), True
+
+
 async def _refresh():
     logger.info("Запуск парсинга источников…")
-    source_errors: list[str] = []
-    hh_out, tg_news, ys_out = await asyncio.gather(
-        fetch_hh_vacancies(),
-        fetch_tg_news(),
-        yandex_search.fetch_yandex_vacancies(None),
+    vac_out, news_out = await asyncio.gather(
+        _ingest_role(None),
+        _ingest_news(),
         return_exceptions=True,
     )
 
-    hh_vacancies, hh_errors = _unpack_fetch(hh_out, "hh.ru")
-    source_errors.extend(hh_errors)
-    ys_vacancies, ys_errors = _unpack_fetch(ys_out, "Yandex Search")
-    source_errors.extend(ys_errors)
-    if isinstance(tg_news, Exception):
-        logger.error("Telegram parser error: %s", tg_news)
-        source_errors.append(f"telegram: {tg_news}")
-        tg_news = []
-
-    vacancies = dedup_vacancies(list(hh_vacancies) + list(ys_vacancies))
-    tg_news = dedup_news(tg_news)
+    vacancies, vac_errors = _unpack_fetch(vac_out, "vacancies")
+    news, news_errors = _unpack_fetch(news_out, "news")
+    source_errors = vac_errors + news_errors
 
     if llm.is_enabled() and vacancies:
         try:
@@ -201,13 +221,13 @@ async def _refresh():
             source_errors.append(f"llm: {exc}")
 
     _cache["vacancies"] = vacancies
-    _cache["news"] = tg_news
+    _cache["news"] = news
     _cache["last_update"] = datetime.now(timezone.utc)
     _store_errors(source_errors)
     logger.info(
-        "Парсинг завершён: %d вакансий (hh.ru + Yandex Search), %d новостей из Telegram",
+        "Парсинг завершён: %d вакансий (hh.ru + Yandex Search), %d новостей (t.me/s + Yandex Search)",
         len(vacancies),
-        len(tg_news),
+        len(news),
     )
 
 
@@ -343,9 +363,9 @@ async def get_live_vacancies(
     offset: int = Query(0),
 ):
     role_key = (role or "").strip().lower() or None
-    need_search = bool(role_key and role_key != "all" and not _cache_has_role(role_key))
-    attempted = False
-    if need_search:
+    if role_key == "all":
+        role_key = None
+    if not _cache_has_role(role_key):
         _items, errors, _attempted = await _ensure_role_vacancies(role_key)
         payload = _vacancy_payload(category, role, format, q, limit, offset)
         payload["errors"] = list(errors)
@@ -359,16 +379,19 @@ async def get_live_vacancies(
 
 @app.get("/api/live-news")
 async def get_live_news(limit: int = Query(20, le=50)):
-    news = list(_cache["news"])
-    return JSONResponse(
-        {
-            "news": news[:limit],
-            "lastUpdate": _last_update_label(),
-            "source": "live" if _cache["last_update"] else "empty",
-            "live": bool(news),
-            "errors": list(_cache["source_errors"]),
-        }
-    )
+    news, errors, _attempted = await _ensure_news()
+    payload = {
+        "news": news[:limit],
+        "lastUpdate": _last_update_label(),
+        "source": "live" if news else ("error" if errors else ("live" if _cache["last_update"] else "empty")),
+        "live": bool(news),
+        "errors": list(errors),
+    }
+    if not news and errors:
+        payload["live"] = False
+        payload["source"] = "error"
+        return JSONResponse(payload, status_code=503)
+    return JSONResponse(payload)
 
 
 @app.get("/api/sources")
@@ -378,7 +401,8 @@ async def get_sources():
             "sources": REAL_SOURCES,
             "count": len(REAL_SOURCES),
             "note": (
-                "Опрашиваются hh.ru Public API и Yandex Search API (запросы site:hh.ru и аналоги). "
+                "Опрашиваются hh.ru Public API и Yandex Search API (вакансии: site:hh.ru; "
+                "новости: site:t.me/<канал> по четырём назначенным каналам). "
                 "Карточка ведёт на URL из выдачи. Сайты компаний и неподключённые каналы не числятся источниками."
             ),
         }

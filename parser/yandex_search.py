@@ -42,7 +42,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from parser.dedup import dedup_vacancies, normalize_url
+from parser.dedup import dedup_news, dedup_vacancies, normalize_url
 from parser.hh_parser import (
     INTERNSHIP_PATTERNS,
     ROLE_PATTERNS,
@@ -50,6 +50,7 @@ from parser.hh_parser import (
     _detect_format,
     _make_logo,
 )
+from parser.tg_parser import CHANNELS, _extract_tags, _pick_icon
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,11 @@ VACANCY_PATH_MARKERS = (
     "/jobs/",
     "/intern",
 )
+
+# Assigned IT news sources from the brief / repo — not extra websites.
+NEWS_CHANNEL_IDS = tuple(channel_id for channel_id, _handle, _kind in CHANNELS)
+NEWS_HANDLE_BY_ID = {channel_id: handle for channel_id, handle, _kind in CHANNELS}
+TELEGRAM_NEWS_HOSTS = ("t.me", "telegram.me")
 
 _HL_RE = re.compile(r"</?hlword>", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -249,6 +255,36 @@ def is_allowed_vacancy_url(url: str) -> bool:
     return any(marker in path for marker in VACANCY_PATH_MARKERS)
 
 
+def news_channel_from_url(url: str) -> Optional[str]:
+    """Return assigned channel id (kazanit, …) or None. No extra hosts."""
+    if not is_http_url(url):
+        return None
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in TELEGRAM_NEWS_HOSTS:
+        return None
+    parts = [part for part in (parsed.path or "").split("/") if part]
+    if not parts:
+        return None
+    if parts[0].lower() == "s":
+        if len(parts) < 2:
+            return None
+        channel = parts[1].lower()
+    else:
+        channel = parts[0].lower()
+    if channel.startswith("@"):
+        channel = channel[1:]
+    if channel in NEWS_CHANNEL_IDS:
+        return channel
+    return None
+
+
+def is_allowed_news_url(url: str) -> bool:
+    return news_channel_from_url(url) is not None
+
+
 def build_queries(role: Optional[str] = None) -> list[str]:
     roles = [role] if role and role in ROLE_TERMS else list(DEMO_ROLES if not role or role == "all" else [])
     if role and role not in ROLE_TERMS and role != "all":
@@ -276,6 +312,22 @@ def build_queries(role: Optional[str] = None) -> list[str]:
             seen.add(query)
             compact.append(query)
     return compact
+
+
+def build_news_queries() -> list[str]:
+    """One Search API query per assigned Telegram channel. No extra sites."""
+    queries: list[str] = []
+    seen: set[str] = set()
+    for channel_id in NEWS_CHANNEL_IDS:
+        query = (
+            f"(site:t.me/{channel_id} OR site:t.me/s/{channel_id}) lang:ru "
+            f"(IT OR ИТ OR Казань OR Татарстан OR Иннополис OR вакансия OR "
+            f"хакатон OR стажировка OR школа)"
+        )[:400]
+        if query not in seen:
+            seen.add(query)
+            queries.append(query)
+    return queries
 
 
 def parse_search_xml(xml_text: str) -> tuple[list[dict], Optional[str]]:
@@ -512,6 +564,41 @@ def map_search_hits(hits: list[dict], *, role: Optional[str] = None) -> list[dic
     return cards
 
 
+def map_news_hits(hits: list[dict]) -> list[dict]:
+    """Map Yandex hits to news cards. Only the four assigned t.me channels."""
+    cards: list[dict] = []
+    for hit in hits:
+        url = (hit.get("url") or "").strip()
+        channel_id = news_channel_from_url(url)
+        if not channel_id:
+            continue
+        title = _clean_text(hit.get("title") or "")
+        snippet = _clean_text(hit.get("snippet") or "")
+        if not title:
+            continue
+        handle = NEWS_HANDLE_BY_ID[channel_id]
+        combined = f"{title} {snippet}"
+        digest = hashlib.sha1(normalize_url(url).encode("utf-8")).hexdigest()[:12]
+        summary = snippet or title
+        if len(summary) > 300:
+            summary = summary[:300].rstrip() + "…"
+        cards.append(
+            {
+                "id": f"ys_news_{digest}",
+                "title": title[:90],
+                "source": handle,
+                "sourceType": "telegram",
+                "dateLabel": "из поиска",
+                "dateSort": 50,
+                "tags": _extract_tags(combined),
+                "summary": summary,
+                "icon": _pick_icon(combined),
+                "url": url,
+            }
+        )
+    return cards
+
+
 def _permission_message(status_code: int, body: str) -> str:
     snippet = _SPACE_RE.sub(" ", (body or "")[:240]).strip()
     base = f"Yandex Search: HTTP {status_code}"
@@ -557,14 +644,10 @@ async def web_search(query: str, *, timeout: float = 20) -> list[dict]:
     return hits
 
 
-async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict], list[str]]:
-    """Search public vacancy pages for a role (or the demo role set)."""
+async def _collect_hits(queries: list[str]) -> tuple[list[dict], list[str]]:
+    """Run Search API queries, merge unique hits, collect honest errors."""
     if not is_configured():
         return [], [disabled_message()]
-
-    queries = build_queries(role)
-    errors: list[str] = []
-    hits: list[dict] = []
 
     async def _one(query: str) -> tuple[list[dict], Optional[str]]:
         try:
@@ -574,11 +657,16 @@ async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict]
         except Exception as exc:
             return [], f"Yandex Search: {exc}"
 
-    results = await asyncio.gather(*[_one(q) for q in queries])
+    results = await asyncio.gather(*[_one(query) for query in queries])
+    hits: list[dict] = []
+    errors: list[str] = []
     seen_urls: set[str] = set()
+    seen_err: set[str] = set()
     for batch, error in results:
         if error:
-            errors.append(error)
+            if error not in seen_err:
+                seen_err.add(error)
+                errors.append(error)
             continue
         for hit in batch:
             url = normalize_url(hit.get("url") or "")
@@ -586,17 +674,27 @@ async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict]
                 continue
             seen_urls.add(url)
             hits.append(hit)
+    return hits, errors
 
+
+async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict], list[str]]:
+    """Search public vacancy pages for a role (or the demo role set)."""
+    hits, errors = await _collect_hits(build_queries(role))
     cards = dedup_vacancies(map_search_hits(hits, role=role))
-    uniq_errors: list[str] = []
-    seen_err: set[str] = set()
-    for message in errors:
-        if message and message not in seen_err:
-            seen_err.add(message)
-            uniq_errors.append(message)
-    errors = uniq_errors
     logger.info("Yandex Search role=%s: %d hits → %d cards, %d errors", role, len(hits), len(cards), len(errors))
     if not cards and not errors:
         # Successful empty search is not a transport failure.
         logger.info("Yandex Search role=%s: пустая выдача без ошибки API", role)
+    return cards, errors
+
+
+async def fetch_yandex_news() -> tuple[list[dict], list[str]]:
+    """Search the four assigned Telegram channels via Yandex Search API."""
+    hits, errors = await _collect_hits(build_news_queries())
+    cards = dedup_news(map_news_hits(hits))
+    cards.sort(key=lambda item: item.get("dateSort", 99))
+    cards = cards[:20]
+    logger.info("Yandex Search news: %d hits → %d cards, %d errors", len(hits), len(cards), len(errors))
+    if not cards and not errors:
+        logger.info("Yandex Search news: пустая выдача без ошибки API")
     return cards, errors
