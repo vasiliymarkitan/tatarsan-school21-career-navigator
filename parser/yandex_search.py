@@ -43,6 +43,7 @@ from urllib.parse import urlparse
 import httpx
 
 from parser.dedup import dedup_news, dedup_vacancies, normalize_url
+from parser.geo import extract_location, is_off_region_office
 from parser.hh_parser import (
     INTERNSHIP_PATTERNS,
     ROLE_PATTERNS,
@@ -109,6 +110,14 @@ TELEGRAM_NEWS_HOSTS = ("t.me", "telegram.me")
 _HL_RE = re.compile(r"</?hlword>", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SPACE_RE = re.compile(r"\s+")
+_TG_CHROME_RE = re.compile(
+    r"^(?:telegram(?:\s*:\s*(?:view\s+)?@?[\w_]+)?|"
+    r"view\s+@?[\w_]+|"
+    r"@[\w_]+|"
+    r"[\w_ ]{0,40}[–—-]\s*telegram)$",
+    re.I,
+)
+_SENTENCE_RE = re.compile(r"[\n.!?]+")
 _SALARY_RE = re.compile(
     r"(?:от\s*)?(\d[\d\s]{2,8})\s*(?:[–\-—]|до)\s*(\d[\d\s]{2,8})\s*(₽|руб\.?|RUR|RUB)?"
     r"|от\s*(\d[\d\s]{2,8})\s*(₽|руб\.?|RUR|RUB)"
@@ -314,8 +323,20 @@ def build_queries(role: Optional[str] = None) -> list[str]:
     return compact
 
 
+def build_news_queries_for(channel_id: str) -> list[str]:
+    """Queries for one assigned channel. Failures here must not stop the others."""
+    channel = (channel_id or "").strip().lstrip("@").lower()
+    if not channel:
+        return []
+    return [
+        f"url:t.me/{channel}/*",
+        f"url:t.me/s/{channel}/*",
+        f"@{channel} site:t.me",
+    ]
+
+
 def build_news_queries() -> list[str]:
-    """Search the four assigned channels. No extra hosts.
+    """Search the four assigned channels independently. No extra hosts.
 
     Live Search API (22 Aug 2026): ``site:t.me/<channel>`` plus AND-keywords
     returned 0 hits / 0 errors. Official query language uses ``url:host/path/*``
@@ -326,17 +347,48 @@ def build_news_queries() -> list[str]:
     queries: list[str] = []
     seen: set[str] = set()
     for channel_id in NEWS_CHANNEL_IDS:
-        variants = (
-            f"url:t.me/{channel_id}/*",
-            f"url:t.me/s/{channel_id}/*",
-            f"@{channel_id} site:t.me",
-        )
-        for query in variants:
+        for query in build_news_queries_for(channel_id):
             query = query[:400]
             if query not in seen:
                 seen.add(query)
                 queries.append(query)
     return queries
+
+
+def is_telegram_chrome_title(title: str, channel_id: str = "") -> bool:
+    """True for page chrome like «Telegram: View @it_tatarstan», not a post title."""
+    text = _clean_text(title)
+    if not text:
+        return True
+    lowered = text.casefold()
+    if "telegram: view" in lowered or lowered.startswith("telegram"):
+        return True
+    if _TG_CHROME_RE.match(text):
+        return True
+    channel = (channel_id or "").strip().lstrip("@").casefold()
+    if channel and lowered in {channel, f"@{channel}", f"view @{channel}"}:
+        return True
+    return False
+
+
+def news_title_from_hit(title: str, snippet: str, channel_id: str = "") -> str:
+    """Prefer post text over Telegram/Yandex chrome. Empty means drop the card."""
+    candidates: list[str] = []
+    cleaned_title = _clean_text(title)
+    if cleaned_title:
+        candidates.append(cleaned_title)
+    for part in _SENTENCE_RE.split(snippet or ""):
+        part = _clean_text(part)
+        if len(part) >= 16:
+            candidates.append(part)
+            break
+    leftover = _clean_text(snippet or "")
+    if leftover and leftover not in candidates:
+        candidates.append(leftover)
+    for candidate in candidates:
+        if candidate and not is_telegram_chrome_title(candidate, channel_id):
+            return candidate[:90]
+    return ""
 
 
 def parse_search_xml(xml_text: str) -> tuple[list[dict], Optional[str]]:
@@ -481,18 +533,7 @@ def _extract_salary(text: str) -> Optional[str]:
 
 
 def _extract_location(text: str) -> str:
-    lowered = (text or "").lower()
-    if "иннополис" in lowered:
-        return "Иннополис"
-    if "казан" in lowered:
-        return "Казань"
-    if "альметьев" in lowered:
-        return "Альметьевск"
-    if "татарстан" in lowered:
-        return "Татарстан"
-    if any(token in lowered for token in ("удалён", "удален", "remote", "удаленн")):
-        return "Remote РФ"
-    return "не указано"
+    return extract_location(text)
 
 
 def _extract_format(text: str) -> str:
@@ -545,31 +586,32 @@ def map_search_hits(hits: list[dict], *, role: Optional[str] = None) -> list[dic
             location,
         ]
         digest = hashlib.sha1(normalize_url(url).encode("utf-8")).hexdigest()[:12]
-        cards.append(
-            {
-                "id": f"ys_{digest}",
-                "title": title,
-                "company": company,
-                "logo": logo,
-                "logoColor": logo_color,
-                "logoText": logo_text,
-                "category": category,
-                "role": card_role,
-                "format": fmt,
-                "location": location,
-                "salary": salary,
-                "source": {
-                    "type": "yandex",
-                    "name": f"Yandex Search → {host}",
-                    "url": url,
-                },
-                "dateLabel": "из поиска",
-                "dateSort": 50,
-                "tags": tags,
-                "aiSummary": summary,
+        card = {
+            "id": f"ys_{digest}",
+            "title": title,
+            "company": company,
+            "logo": logo,
+            "logoColor": logo_color,
+            "logoText": logo_text,
+            "category": category,
+            "role": card_role,
+            "format": fmt,
+            "location": location,
+            "salary": salary,
+            "source": {
+                "type": "yandex",
+                "name": f"Yandex Search → {host}",
                 "url": url,
-            }
-        )
+            },
+            "dateLabel": "из поиска",
+            "dateSort": 50,
+            "tags": tags,
+            "aiSummary": summary,
+            "url": url,
+        }
+        if is_off_region_office(card):
+            continue
+        cards.append(card)
     return cards
 
 
@@ -581,14 +623,17 @@ def map_news_hits(hits: list[dict]) -> list[dict]:
         channel_id = news_channel_from_url(url)
         if not channel_id:
             continue
-        title = _clean_text(hit.get("title") or "")
+        raw_title = _clean_text(hit.get("title") or "")
         snippet = _clean_text(hit.get("snippet") or "")
+        title = news_title_from_hit(raw_title, snippet, channel_id)
         if not title:
             continue
         handle = NEWS_HANDLE_BY_ID[channel_id]
         combined = f"{title} {snippet}"
         digest = hashlib.sha1(normalize_url(url).encode("utf-8")).hexdigest()[:12]
         summary = snippet or title
+        if is_telegram_chrome_title(summary, channel_id):
+            summary = title
         if len(summary) > 300:
             summary = summary[:300].rstrip() + "…"
         cards.append(
@@ -698,14 +743,34 @@ async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict]
 
 
 async def fetch_yandex_news() -> tuple[list[dict], list[str]]:
-    """Search the four assigned Telegram channels via Yandex Search API."""
-    queries = build_news_queries()
-    logger.info("Yandex Search news queries=%d first=%s", len(queries), queries[0] if queries else "")
-    hits, errors = await _collect_hits(queries)
-    cards = dedup_news(map_news_hits(hits))
+    """Search the four assigned Telegram channels independently via Yandex Search API."""
+    if not is_configured():
+        return [], [disabled_message()]
+
+    all_hits: list[dict] = []
+    errors: list[str] = []
+    seen_err: set[str] = set()
+    for channel_id in NEWS_CHANNEL_IDS:
+        queries = build_news_queries_for(channel_id)
+        logger.info("Yandex Search news channel=%s queries=%d", channel_id, len(queries))
+        hits, channel_errors = await _collect_hits(queries)
+        all_hits.extend(hits)
+        for error in channel_errors:
+            labeled = error if channel_id in error else f"{error} [{channel_id}]"
+            if labeled not in seen_err:
+                seen_err.add(labeled)
+                errors.append(labeled)
+        logger.info(
+            "Yandex Search news channel=%s: %d hits, %d errors",
+            channel_id,
+            len(hits),
+            len(channel_errors),
+        )
+
+    cards = dedup_news(map_news_hits(all_hits))
     cards.sort(key=lambda item: item.get("dateSort", 99))
     cards = cards[:20]
-    logger.info("Yandex Search news: %d hits → %d cards, %d errors", len(hits), len(cards), len(errors))
+    logger.info("Yandex Search news: %d hits → %d cards, %d errors", len(all_hits), len(cards), len(errors))
     if not cards and not errors:
         logger.info("Yandex Search news: пустая выдача без ошибки API")
     return cards, errors

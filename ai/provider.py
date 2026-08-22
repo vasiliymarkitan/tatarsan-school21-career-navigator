@@ -83,6 +83,45 @@ def _default_plan(role: str, skills: str) -> dict[str, Any]:
     }
 
 
+def select_cached_vacancies(
+    cache: list[dict],
+    *,
+    role: str,
+    skills: str,
+    plan: dict[str, Any],
+) -> list[dict]:
+    """Pick real cards from the live cache. Never invent or call hh.ru."""
+    from parser.geo import prefer_tatarstan, scope_default_stream
+
+    data = scope_default_stream(list(cache or []))
+    role_key = (role or "").strip().lower()
+    if role_key and role_key != "all":
+        data = [item for item in data if str(item.get("role") or "") == role_key]
+    if plan.get("internship_only"):
+        intern = [item for item in data if item.get("category") == "internship"]
+        if intern:
+            data = intern
+    if plan.get("prefer_remote"):
+        remote = [item for item in data if item.get("format") == "remote"]
+        if remote:
+            data = remote
+    tokens = [token.casefold() for token in re.split(r"[,\s/;]+", skills or "") if len(token.strip()) > 1]
+    if tokens:
+        def score(item: dict) -> int:
+            blob = " ".join(
+                [
+                    str(item.get("title") or ""),
+                    str(item.get("company") or ""),
+                    " ".join(str(tag) for tag in (item.get("tags") or [])),
+                    str(item.get("aiSummary") or ""),
+                ]
+            ).casefold()
+            return sum(1 for token in tokens if token in blob)
+
+        data = sorted(data, key=score, reverse=True)
+    return prefer_tatarstan(data)
+
+
 def _parse_plan(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
     match = re.search(r"\{[^{}]+\}", raw or "", re.DOTALL)
     if not match:
@@ -103,9 +142,15 @@ def _parse_plan(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
     return plan
 
 
-async def run_career_agent(role: str, skills: str, goals: str) -> dict[str, Any]:
+async def run_career_agent(
+    role: str,
+    skills: str,
+    goals: str,
+    vacancies: list[dict] | None = None,
+) -> dict[str, Any]:
     provider = configured_provider()
     agent_name = "GigaChat" if provider == "gigachat" else "YandexGPT Lite"
+    cached = list(vacancies or [])
 
     if not is_enabled():
         return {
@@ -114,11 +159,18 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict[str, Any]
             "steps": [],
             "agent": None,
             "vacancies_source": "none",
+            "cache_size": len(cached),
         }
 
     if provider == "gigachat":
-        result = await giga.run_career_agent(role, skills, goals)
-        result.setdefault("vacancies_source", "hh" if result.get("vacancies") else "none")
+        result = await giga.run_career_agent(role, skills, goals, vacancies=cached)
+        if result.get("vacancies"):
+            result.setdefault("vacancies_source", "live_cache")
+        elif cached:
+            result.setdefault("vacancies_source", "cache_no_match")
+        else:
+            result.setdefault("vacancies_source", "cache_empty")
+        result.setdefault("cache_size", len(cached))
         return result
 
     steps: list[dict[str, Any]] = []
@@ -130,23 +182,21 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict[str, Any]
         logger.warning("Agent PLAN step error: %s", exc)
     steps.append({"step": "plan", "tool": "search_vacancies", "params": plan})
 
-    from parser.hh_parser import fetch_vacancies_by_query
+    selected = select_cached_vacancies(cached, role=role, skills=skills, plan=plan)
+    if selected:
+        source = "live_cache"
+    elif cached:
+        source = "cache_no_match"
+    else:
+        source = "cache_empty"
+    steps.append({"step": "act", "tool": "live_cache", "found": len(selected), "cache_size": len(cached)})
 
-    vacancies: list[dict] = []
-    try:
-        schedule = "remote" if plan.get("prefer_remote") else None
-        query = plan.get("search_query") or f"junior {role} {skills}".strip()
-        vacancies = await fetch_vacancies_by_query(query, schedule=schedule, per_page=12)
-    except Exception as exc:
-        logger.warning("Agent ACT step error: %s", exc)
-    steps.append({"step": "act", "tool": "hh_api", "found": len(vacancies)})
-
-    if vacancies:
+    if selected:
         vac_list = "\n".join(
             f"  {i + 1}. «{v['title']}» — {v['company']} "
             f"({v['format']}, {v['location']})"
             f"{', ' + v['salary'] if v.get('salary') else ''}"
-            for i, v in enumerate(vacancies[:8])
+            for i, v in enumerate(selected[:8])
         )
     else:
         vac_list = None
@@ -161,10 +211,11 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict[str, Any]
 
     return {
         "advice": advice,
-        "vacancies": vacancies[:5],
+        "vacancies": selected[:5],
         "steps": steps,
         "agent": agent_name,
-        "vacancies_source": "hh" if vacancies else "none",
+        "vacancies_source": source,
+        "cache_size": len(cached),
     }
 
 

@@ -73,17 +73,20 @@ async def get_career_advice(role: str, skills: str, goals: str) -> str:
         return f"Ошибка AI: {e}"
 
 
-async def run_career_agent(role: str, skills: str, goals: str) -> dict:
+async def run_career_agent(role: str, skills: str, goals: str, vacancies: list | None = None) -> dict:
     """
-    ReAct-style career agent: plan → act (hh.ru search) → verify.
-    Returns {advice, vacancies, steps, agent}.
+    ReAct-style career agent: plan → act (live cache) → verify.
+    Returns {advice, vacancies, steps, agent}. Never invents jobs or calls hh.ru.
     """
+    cached = list(vacancies or [])
     if not _ENABLED:
         return {
             "advice": "GigaChat не настроен — задайте GIGACHAT_CREDENTIALS в .env",
             "vacancies": [],
             "steps": [],
             "agent": None,
+            "vacancies_source": "none",
+            "cache_size": len(cached),
         }
 
     steps: list[dict] = []
@@ -93,7 +96,8 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict:
         "Ты — карьерный агент для IT-студентов Татарстана.\n"
         f"Профиль пользователя: направление={role or 'любое IT'}, "
         f"навыки={skills or 'начинающий'}, цели={goals or 'стажировка'}.\n\n"
-        "Шаг PLAN: определи параметры поиска вакансий на hh.ru.\n"
+        "Шаг PLAN: определи параметры отбора вакансий из живого кэша "
+        "(Татарстан / удалёнка РФ). Не придумывай вакансии.\n"
         "Ответь СТРОГО JSON без пояснений:\n"
         '{"search_query": "...", "prefer_remote": true|false, "internship_only": true|false}'
     )
@@ -113,45 +117,48 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict:
         logger.warning("Agent PLAN step error: %s", e)
     steps.append({"step": "plan", "tool": "search_vacancies", "params": plan})
 
-    # ── STEP 2: ACT ──────────────────────────────────────────────────────────
-    from parser.hh_parser import fetch_vacancies_by_query
-
-    vacancies: list[dict] = []
-    try:
-        schedule = "remote" if plan.get("prefer_remote") else None
-        query = plan.get("search_query") or f"junior {role} {skills}".strip()
-        vacancies = await fetch_vacancies_by_query(query, schedule=schedule, per_page=12)
-    except Exception as e:
-        logger.warning("Agent ACT step error: %s", e)
-    steps.append({"step": "act", "tool": "hh_api", "found": len(vacancies)})
+    # ── STEP 2: ACT — live cache only ────────────────────────────────────────
+    selected = list(cached)
+    role_key = (role or "").strip().lower()
+    if role_key and role_key != "all":
+        selected = [item for item in selected if str(item.get("role") or "") == role_key]
+    if plan.get("internship_only"):
+        intern = [item for item in selected if item.get("category") == "internship"]
+        if intern:
+            selected = intern
+    if plan.get("prefer_remote"):
+        remote = [item for item in selected if item.get("format") == "remote"]
+        if remote:
+            selected = remote
+    steps.append({"step": "act", "tool": "live_cache", "found": len(selected), "cache_size": len(cached)})
 
     # ── STEP 3: VERIFY ────────────────────────────────────────────────────────
-    if vacancies:
+    if selected:
         vac_list = "\n".join(
             f"  {i + 1}. «{v['title']}» — {v['company']} "
             f"({v['format']}, {v['location']})"
             f"{', ' + v['salary'] if v.get('salary') else ''}"
-            for i, v in enumerate(vacancies[:8])
+            for i, v in enumerate(selected[:8])
         )
         verify_prompt = (
             "Ты — карьерный агент для IT-студентов Татарстана.\n"
             f"Профиль: направление={role or 'любое IT'}, "
             f"навыки={skills or 'начинающий'}, цели={goals or 'стажировка'}.\n\n"
-            f"Шаг VERIFY: агент нашёл вакансии на hh.ru:\n{vac_list}\n\n"
+            f"Шаг VERIFY: агент взял карточки из живого кэша:\n{vac_list}\n\n"
             "Задача:\n"
             "1. Оцени соответствие каждой вакансии профилю (подходит / частично / не подходит).\n"
             "2. Выдели ТОП-3 наиболее подходящих с пояснением.\n"
             "3. Для каждой из ТОП-3 — что нужно подготовить перед откликом.\n"
-            "4. Дай 2–3 конкретных следующих шага. По-русски, без воды."
+            "4. Дай 2–3 конкретных следующих шага. По-русски, без воды. Не выдумывай вакансии."
         )
     else:
         verify_prompt = (
             "Ты — карьерный агент для IT-студентов Татарстана.\n"
             f"Профиль: направление={role or 'любое IT'}, "
             f"навыки={skills or 'начинающий'}, цели={goals or 'стажировка'}.\n\n"
-            "Поиск вакансий не дал результатов. Дай 4–5 конкретных шагов: "
-            "что изучить, какие компании рассмотреть (Казань, Иннополис, удалёнка), "
-            "как составить резюме. По-русски, конкретно."
+            "В живом кэше сейчас нет подходящих карточек. Не выдумывай вакансии. "
+            "Дай 4–5 конкретных шагов: что изучить, какие компании рассмотреть "
+            "(Казань, Иннополис, удалёнка), как составить резюме. По-русски, конкретно."
         )
     advice = ""
     try:
@@ -165,9 +172,11 @@ async def run_career_agent(role: str, skills: str, goals: str) -> dict:
 
     return {
         "advice": advice,
-        "vacancies": vacancies[:5],
+        "vacancies": selected[:5],
         "steps": steps,
         "agent": "GigaChat",
+        "vacancies_source": "live_cache" if selected else ("cache_no_match" if cached else "cache_empty"),
+        "cache_size": len(cached),
     }
 
 

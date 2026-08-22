@@ -27,6 +27,7 @@
 
       <nav class="nav">
         <a href="#vacancies" class="nav-link active" data-section="vacancies">Вакансии</a>
+        <a href="#top5" class="nav-link" data-section="top5">Топ-5</a>
         <a href="#agent" class="nav-link" data-section="agent">Агент</a>
         <a href="#news" class="nav-link" data-section="news">IT-новости</a>
         <a href="#sources" class="nav-link">Источники</a>
@@ -130,6 +131,21 @@
   </div>
 </section>
 
+<!-- ===== TOP-5 ЗА ДЕНЬ ===== -->
+<section class="top5-section" id="top5">
+  <div class="container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">Топ-5 за день</h2>
+        <p class="section-sub">Живые junior/стажировки из кэша: Татарстан и удалёнка РФ. Без выдуманных карточек.</p>
+      </div>
+    </div>
+    <ol class="top5-list" id="top5List">
+      <li class="top5-empty">Загружаем топ-5 из живого кэша…</li>
+    </ol>
+  </div>
+</section>
+
 <!-- ===== MAIN CONTENT ===== -->
 <main class="main" id="vacancies">
   <div class="container">
@@ -219,7 +235,7 @@
     <div class="section-header">
       <div>
         <h2 class="section-title"><span class="agent-badge">AI</span>Карьерный агент</h2>
-        <p class="section-sub">План → поиск на hh.ru → разбор найденных карточек. Без живых вакансий агент не подставляет фейки.</p>
+        <p class="section-sub">План → живой кэш вакансий → разбор найденных карточек. Без живых вакансий агент не подставляет фейки.</p>
       </div>
     </div>
     <div class="agent-layout">
@@ -250,7 +266,7 @@
         <div class="agent-steps" id="agentSteps" style="display:none">
           <div class="agent-step" id="stepPlan"><span class="step-icon">1</span><span class="step-label">PLAN</span><span class="step-status" id="stepPlanStatus">ожидание</span></div>
           <div class="agent-step-arrow">↓</div>
-          <div class="agent-step" id="stepAct"><span class="step-icon">2</span><span class="step-label">ACT · hh.ru</span><span class="step-status" id="stepActStatus">ожидание</span></div>
+          <div class="agent-step" id="stepAct"><span class="step-icon">2</span><span class="step-label">ACT · кэш</span><span class="step-status" id="stepActStatus">ожидание</span></div>
           <div class="agent-step-arrow">↓</div>
           <div class="agent-step" id="stepVerify"><span class="step-icon">3</span><span class="step-label">VERIFY</span><span class="step-status" id="stepVerifyStatus">ожидание</span></div>
         </div>
@@ -351,9 +367,7 @@
       <div id="tgAuthLoading" class="tg-auth-hint">
         <span class="tg-auth-spinner"></span> Загрузка виджета…
       </div>
-      <div id="tgAuthDisabled" class="tg-auth-hint" style="display:none">
-        ⚠️ Telegram-авторизация не настроена
-      </div>
+      <div id="tgAuthDisabled" class="tg-auth-hint" style="display:none"></div>
 
       <p class="tg-auth-note">
         Мы получим только имя и фото из Telegram. Никаких паролей.

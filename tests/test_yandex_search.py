@@ -6,13 +6,16 @@ from parser import yandex_search
 from parser.yandex_search import (
     SearchAPIError,
     build_news_queries,
+    build_news_queries_for,
     build_queries,
     decode_raw_data,
     is_allowed_news_url,
     is_allowed_vacancy_url,
+    is_telegram_chrome_title,
     map_news_hits,
     map_search_hits,
     news_channel_from_url,
+    news_title_from_hit,
     parse_search_xml,
 )
 
@@ -118,6 +121,34 @@ def test_drop_results_without_http_url_or_non_job_host():
     assert cards[0]["url"] == "https://hh.ru/vacancy/123456"
     assert cards[0]["source"]["name"] == "Yandex Search → hh.ru"
     assert cards[0]["source"]["type"] == "yandex"
+
+
+def test_map_drops_moscow_office_keeps_remote_and_kazan():
+    hits = [
+        {
+            "url": "https://hh.ru/vacancy/1",
+            "title": "Стажёр Python, Москва",
+            "snippet": "офис в Москве",
+            "domain": "hh.ru",
+        },
+        {
+            "url": "https://hh.ru/vacancy/2",
+            "title": "Junior Python remote Москва",
+            "snippet": "удалённо, Россия",
+            "domain": "hh.ru",
+        },
+        {
+            "url": "https://hh.ru/vacancy/3",
+            "title": "Junior Python, Казань",
+            "snippet": "офис",
+            "domain": "hh.ru",
+        },
+    ]
+    cards = map_search_hits(hits, role="backend")
+    urls = [card["url"] for card in cards]
+    assert "https://hh.ru/vacancy/1" not in urls
+    assert "https://hh.ru/vacancy/2" in urls
+    assert "https://hh.ru/vacancy/3" in urls
 
 
 def test_map_does_not_invent_company_or_salary():
@@ -303,6 +334,47 @@ def test_web_search_raises_on_http_error(monkeypatch):
         assert "yc.search-api.execute" in str(exc)
 
 
+def test_build_news_queries_for_one_channel():
+    queries = build_news_queries_for("kazanit")
+    blob = " ".join(queries)
+    assert "url:t.me/kazanit/*" in blob
+    assert "it_tatarstan" not in blob
+    assert "hh.ru" not in blob
+
+
+def test_telegram_chrome_title_is_detected():
+    assert is_telegram_chrome_title("Telegram: View @it_tatarstan", "it_tatarstan")
+    assert is_telegram_chrome_title("Telegram", "kazanit")
+    assert not is_telegram_chrome_title("Хакатон Школы 21 в Казани", "it_tatarstan")
+    assert news_title_from_hit(
+        "Telegram: View @it_tatarstan",
+        "Хакатон Школы 21 в Казани откроется в сентябре",
+        "it_tatarstan",
+    ).startswith("Хакатон")
+
+
+def test_map_news_uses_snippet_when_title_is_chrome():
+    hits = [
+        {
+            "url": "https://t.me/it_tatarstan/99",
+            "title": "Telegram: View @it_tatarstan",
+            "snippet": "Хакатон Школы 21 в Казани откроется в сентябре",
+            "domain": "t.me",
+        },
+        {
+            "url": "https://t.me/it_tatarstan",
+            "title": "Telegram: View @it_tatarstan",
+            "snippet": "",
+            "domain": "t.me",
+        },
+    ]
+    cards = map_news_hits(hits)
+    assert len(cards) == 1
+    assert cards[0]["url"] == "https://t.me/it_tatarstan/99"
+    assert "Хакатон" in cards[0]["title"]
+    assert "Telegram: View" not in cards[0]["title"]
+
+
 def test_build_news_queries_only_assigned_channels():
     queries = build_news_queries()
     blob = " ".join(queries).lower()
@@ -366,6 +438,35 @@ def test_fetch_yandex_news_mocked_http(monkeypatch):
     assert any("@kazanit site:t.me" in query for query in captured["queries"])
     assert all("site:hh.ru" not in query for query in captured["queries"])
     assert all("site:t.me/kazanit" not in query for query in captured["queries"])
+
+
+def test_news_channels_queried_independently(monkeypatch):
+    monkeypatch.setenv("YANDEX_API_KEY", "test-search-key")
+    monkeypatch.setenv("YANDEX_FOLDER_ID", "b1gfolder")
+
+    async def fake_collect(queries):
+        blob = " ".join(queries)
+        if "kazanit" in blob:
+            return [], ["Yandex Search: HTTP 403 Permission denied"]
+        if "it_tatarstan" in blob:
+            return [
+                {
+                    "url": "https://t.me/it_tatarstan/5",
+                    "title": "Telegram: View @it_tatarstan",
+                    "snippet": "Набор в Школу 21: стажировки в Казани",
+                    "domain": "t.me",
+                }
+            ], []
+        return [], []
+
+    monkeypatch.setattr(yandex_search, "_collect_hits", fake_collect)
+    items, errors = asyncio.run(yandex_search.fetch_yandex_news())
+    assert len(items) == 1
+    assert items[0]["url"] == "https://t.me/it_tatarstan/5"
+    assert "Набор" in items[0]["title"]
+    assert "Telegram: View" not in items[0]["title"]
+    assert errors
+    assert any("403" in err for err in errors)
 
 
 def test_unconfigured_news_search_does_not_call_http(monkeypatch):

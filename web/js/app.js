@@ -201,6 +201,8 @@ function initFilters() {
       state[filter] = value;
       if (filter === 'role') {
         fetchVacanciesFromApi({ role: value });
+      } else if (filter === 'location') {
+        fetchVacanciesFromApi({ location: value });
       } else {
         renderVacancies();
       }
@@ -369,6 +371,7 @@ function initBurger() {
     mobileNav.id = 'mobileNav';
     mobileNav.innerHTML = `
       <a href="#vacancies" class="nav-link" onclick="closeMobileNav()">Вакансии</a>
+      <a href="#top5" class="nav-link" onclick="closeMobileNav()">Топ-5</a>
       <a href="#agent" class="nav-link" onclick="closeMobileNav()">Агент</a>
       <a href="#" class="nav-link" onclick="openModal('digestModal');closeMobileNav()">Дайджест</a>
       <a href="#news" class="nav-link" onclick="closeMobileNav()">IT-новости</a>
@@ -393,7 +396,7 @@ function initHeaderScroll() {
 }
 
 function initNavHighlight() {
-  const sections = ['vacancies', 'news', 'agent'];
+  const sections = ['vacancies', 'top5', 'news', 'agent'];
   const navLinks = document.querySelectorAll('.nav-link[data-section]');
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
@@ -466,18 +469,36 @@ window.onTelegramAuth = async function(tgUser) {
   }
 };
 
+function _showTgAuthHint(text) {
+  const loading = document.getElementById('tgAuthLoading');
+  const disabled = document.getElementById('tgAuthDisabled');
+  if (loading) loading.style.display = 'none';
+  if (disabled) {
+    disabled.style.display = 'block';
+    disabled.textContent = text;
+  }
+}
+
 async function _loadTelegramWidget() {
+  const loading = document.getElementById('tgAuthLoading');
+  const disabled = document.getElementById('tgAuthDisabled');
+  const container = document.getElementById('telegramWidgetContainer');
   try {
     const res = await fetch('/api/auth/bot-info');
     const info = await res.json();
-    const loading = document.getElementById('tgAuthLoading');
-    const disabled = document.getElementById('tgAuthDisabled');
-    const container = document.getElementById('telegramWidgetContainer');
 
     if (!info.enabled || !info.username) {
-      if (loading) loading.style.display = 'none';
-      if (disabled) disabled.style.display = 'block';
+      _showTgAuthHint(
+        info.username
+          ? `Бот @${info.username} указан, но вход сейчас недоступен. Обновите страницу.`
+          : 'Telegram-авторизация не настроена на этом стенде.'
+      );
       return;
+    }
+
+    if (disabled) {
+      disabled.style.display = 'none';
+      disabled.textContent = '';
     }
 
     const script = document.createElement('script');
@@ -489,8 +510,13 @@ async function _loadTelegramWidget() {
     script.setAttribute('data-lang', 'ru');
     script.async = true;
     script.onload = () => { if (loading) loading.style.display = 'none'; };
+    script.onerror = () => {
+      _showTgAuthHint(`Бот @${info.username} настроен, виджет Telegram не загрузился. Обновите страницу.`);
+    };
     if (container) container.appendChild(script);
-  } catch (_) {}
+  } catch (_) {
+    _showTgAuthHint('Не удалось проверить статус Telegram. Обновите страницу — не утверждаем, что вход выключен.');
+  }
 }
 
 async function checkAuthState() {
@@ -568,18 +594,40 @@ function mergeVacancies(incoming) {
   VACANCIES = [...map.values()];
 }
 
-async function fetchVacanciesFromApi({ role, query } = {}) {
+function renderTopDay(items) {
+  const list = document.getElementById('top5List');
+  if (!list) return;
+  if (!items || !items.length) {
+    list.innerHTML = '<li class="top5-empty">В живом кэше пока нет карточек для топ-5. Фейки не подставляем.</li>';
+    return;
+  }
+  list.innerHTML = items.map((v, index) => `
+    <li class="top5-item">
+      <span class="top5-rank">${index + 1}</span>
+      <a class="top5-body" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">
+        <span class="top5-title">${escapeHtml(v.title)}</span>
+        <span class="top5-meta">${escapeHtml(v.company || 'компания не указана')} · ${escapeHtml(v.location || 'не указано')}</span>
+      </a>
+      <span class="top5-salary">${escapeHtml(v.salary || '')}</span>
+    </li>
+  `).join('');
+}
+
+async function fetchVacanciesFromApi({ role, query, location } = {}) {
   const params = new URLSearchParams({ limit: '200' });
   const roleKey = role || state.role;
   if (roleKey && roleKey !== 'all') params.set('role', roleKey);
   const q = query !== undefined ? query : state.query;
   if (q) params.set('q', q);
+  const loc = location !== undefined ? location : state.location;
+  if (loc && loc !== 'all') params.set('location', loc);
   _showCardsLoading();
   try {
     const res = await fetch(`/api/live-vacancies?${params.toString()}`);
     const data = await res.json();
     mergeVacancies(data.vacancies || []);
     renderVacancies();
+    if (data.topDay) renderTopDay(data.topDay);
     initCounters();
     _showLiveBadge(data.lastUpdate, VACANCIES.length, data.source, data.errors);
     if (!res.ok && !(data.vacancies || []).length) {
@@ -621,6 +669,7 @@ async function loadLiveData() {
     const vacData = vacRes.ok || vacRes.status === 503 ? await vacRes.json() : {};
     VACANCIES = vacData.vacancies || [];
     renderVacancies();
+    renderTopDay(vacData.topDay || VACANCIES.slice(0, 5));
     initCounters();
     _showLiveBadge(vacData.lastUpdate, VACANCIES.length, vacData.source, vacData.errors);
     if (!vacRes.ok && !VACANCIES.length) {
@@ -736,7 +785,10 @@ async function runCareerAgent() {
         </div>
       `).join('');
     } else {
-      vacsEl.innerHTML = '<p style="color:var(--text2);font-size:13px">hh.ru ничего не вернул — фейковые вакансии не подставляем</p>';
+      const why = data.vacancies_source === 'cache_empty'
+        ? 'Живой кэш пуст — фейковые вакансии не подставляем'
+        : 'В живом кэше нет карточек под этот запрос — фейковые вакансии не подставляем';
+      vacsEl.innerHTML = `<p style="color:var(--text2);font-size:13px">${why}</p>`;
     }
 
     document.getElementById('agentAdviceText').textContent = data.advice || 'Нет ответа от агента';
