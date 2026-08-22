@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,7 +85,12 @@ _cache: dict = {
     "last_update": None,
     "fetch_error": None,
     "source_errors": [],
+    "vacancy_errors": [],
+    "news_errors": [],
 }
+
+_TELEGRAM_BLANK_RE = re.compile(r"^telegram(?:\s+@?[\w_]+)?\s*:\s*$", re.I)
+_RT_HINTS = ("казан", "татарстан", "иннополис", "альметьев", "набережн")
 
 
 def _last_update_label() -> str:
@@ -133,6 +139,56 @@ def _store_errors(source_errors: list[str]) -> None:
     _cache["fetch_error"] = "; ".join(unique) if unique else None
 
 
+def _news_payload_errors(errors: list[str]) -> list[str]:
+    """News payload: news ingest only. Drop hh.ru leftovers and blank telegram lines."""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in errors:
+        msg = (raw or "").strip()
+        if not msg or msg in seen:
+            continue
+        if msg.lower().startswith("hh.ru"):
+            continue
+        if _TELEGRAM_BLANK_RE.match(msg):
+            continue
+        seen.add(msg)
+        unique.append(msg)
+    return unique
+
+
+def _news_hard_errors(errors: list[str]) -> list[str]:
+    """503 only when news search itself failed. Telegram scrape is not enough."""
+    hard: list[str] = []
+    for msg in _news_payload_errors(errors):
+        if msg.lower().startswith("telegram"):
+            continue
+        hard.append(msg)
+    return hard
+
+
+def _prefer_tatarstan(items: list[dict]) -> list[dict]:
+    """Bias live cards toward Kazan / RT / Innopolis. Do not invent or drop jobs."""
+
+    def rank(item: dict) -> tuple[int, int]:
+        blob = " ".join(
+            [
+                str(item.get("location") or ""),
+                str(item.get("title") or ""),
+                str(item.get("aiSummary") or ""),
+            ]
+        ).lower()
+        if any(hint in blob for hint in _RT_HINTS):
+            region = 0
+        elif "москв" in blob:
+            region = 2
+        else:
+            region = 1
+        date_sort = item.get("dateSort")
+        return (region, int(date_sort) if date_sort is not None else 99)
+
+    return sorted(items, key=rank)
+
+
 def _cache_has_role(role: Optional[str]) -> bool:
     vacancies = _cache["vacancies"]
     if not vacancies:
@@ -166,9 +222,10 @@ async def _ensure_role_vacancies(role: Optional[str]) -> tuple[list[dict], list[
             return list(_cache["vacancies"]), list(_cache["source_errors"]), False
         items, errors = await _ingest_role(None if key == "all" else key)
         _cache["vacancies"] = dedup_vacancies(list(_cache["vacancies"]) + items)
+        _cache["vacancy_errors"] = list(errors)
         _cache["last_update"] = datetime.now(timezone.utc)
-        _store_errors(errors)
-        return list(_cache["vacancies"]), list(_cache["source_errors"]), True
+        _store_errors(list(errors) + list(_cache.get("news_errors") or []))
+        return list(_cache["vacancies"]), list(_cache["vacancy_errors"]), True
 
 
 async def _ingest_news() -> tuple[list[dict], list[str]]:
@@ -188,16 +245,18 @@ async def _ingest_news() -> tuple[list[dict], list[str]]:
 async def _ensure_news() -> tuple[list[dict], list[str], bool]:
     """On-demand news search when the cache is still empty."""
     if _cache["news"]:
-        return list(_cache["news"]), list(_cache["source_errors"]), False
+        return list(_cache["news"]), list(_cache.get("news_errors") or []), False
 
     async with _news_lock:
         if _cache["news"]:
-            return list(_cache["news"]), list(_cache["source_errors"]), False
+            return list(_cache["news"]), list(_cache.get("news_errors") or []), False
         items, errors = await _ingest_news()
+        news_errors = _news_payload_errors(errors)
         _cache["news"] = items
+        _cache["news_errors"] = news_errors
         _cache["last_update"] = datetime.now(timezone.utc)
-        _store_errors(list(_cache["source_errors"]) + errors)
-        return list(_cache["news"]), list(_cache["source_errors"]), True
+        _store_errors(list(_cache.get("vacancy_errors") or []) + news_errors)
+        return list(_cache["news"]), list(news_errors), True
 
 
 async def _refresh():
@@ -210,7 +269,6 @@ async def _refresh():
 
     vacancies, vac_errors = _unpack_fetch(vac_out, "vacancies")
     news, news_errors = _unpack_fetch(news_out, "news")
-    source_errors = vac_errors + news_errors
 
     if llm.is_enabled() and vacancies:
         try:
@@ -218,12 +276,14 @@ async def _refresh():
             logger.info("%s: enriched top-5 vacancy summaries", llm.status()["provider"])
         except Exception as exc:
             logger.warning("LLM enrich failed: %s", exc)
-            source_errors.append(f"llm: {exc}")
+            vac_errors = list(vac_errors) + [f"llm: {exc}"]
 
     _cache["vacancies"] = vacancies
     _cache["news"] = news
+    _cache["vacancy_errors"] = list(vac_errors)
+    _cache["news_errors"] = _news_payload_errors(news_errors)
     _cache["last_update"] = datetime.now(timezone.utc)
-    _store_errors(source_errors)
+    _store_errors(list(vac_errors) + list(_cache["news_errors"]))
     logger.info(
         "Парсинг завершён: %d вакансий (hh.ru + Yandex Search), %d новостей (t.me/s + Yandex Search)",
         len(vacancies),
@@ -336,6 +396,7 @@ def _vacancy_payload(category, role, fmt, q, limit, offset):
             if q_lower
             in (v.get("title", "") + " " + v.get("company", "") + " " + " ".join(v.get("tags", []))).lower()
         ]
+    data = _prefer_tatarstan(data)
     total = len(data)
     return {
         "total": total,
@@ -380,14 +441,16 @@ async def get_live_vacancies(
 @app.get("/api/live-news")
 async def get_live_news(limit: int = Query(20, le=50)):
     news, errors, _attempted = await _ensure_news()
+    shown = _news_payload_errors(errors)
+    hard = _news_hard_errors(errors)
     payload = {
         "news": news[:limit],
         "lastUpdate": _last_update_label(),
-        "source": "live" if news else ("error" if errors else ("live" if _cache["last_update"] else "empty")),
+        "source": "live" if news else ("error" if hard else ("live" if _cache["last_update"] else "empty")),
         "live": bool(news),
-        "errors": list(errors),
+        "errors": shown,
     }
-    if not news and errors:
+    if not news and hard:
         payload["live"] = False
         payload["source"] = "error"
         return JSONResponse(payload, status_code=503)
@@ -402,7 +465,7 @@ async def get_sources():
             "count": len(REAL_SOURCES),
             "note": (
                 "Опрашиваются hh.ru Public API и Yandex Search API (вакансии: site:hh.ru; "
-                "новости: site:t.me/<канал> по четырём назначенным каналам). "
+                "новости: url:t.me/<канал>/* и @канал site:t.me по четырём назначенным каналам). "
                 "Карточка ведёт на URL из выдачи. Сайты компаний и неподключённые каналы не числятся источниками."
             ),
         }

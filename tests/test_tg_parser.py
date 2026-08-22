@@ -1,4 +1,4 @@
-from parser.tg_parser import CHANNELS, _parse_channel
+from parser.tg_parser import CHANNELS, _format_exc, _parse_channel
 
 
 HTML = """
@@ -28,3 +28,8 @@ def test_parse_keeps_only_relevant_it_posts():
 def test_channels_are_the_real_ones_only():
     handles = [handle for _, handle, _ in CHANNELS]
     assert handles == ["@kazanit", "@it_tatarstan", "@innopolis_live", "@school21_kazan"]
+
+
+def test_blank_exception_keeps_type_name():
+    assert _format_exc(Exception()) == "Exception"
+    assert "TimeoutError" in _format_exc(TimeoutError())

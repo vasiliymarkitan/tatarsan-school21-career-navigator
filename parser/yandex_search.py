@@ -315,18 +315,27 @@ def build_queries(role: Optional[str] = None) -> list[str]:
 
 
 def build_news_queries() -> list[str]:
-    """One Search API query per assigned Telegram channel. No extra sites."""
+    """Search the four assigned channels. No extra hosts.
+
+    Live Search API (22 Aug 2026): ``site:t.me/<channel>`` plus AND-keywords
+    returned 0 hits / 0 errors. Official query language uses ``url:host/path/*``
+    for a URL prefix and ``site:t.me`` only as a host. Extra AND tokens and
+    ``lang:ru`` over-constrain Telegram pages that the API may not tag as ru.
+    Cards are still filtered to these four channels after the search.
+    """
     queries: list[str] = []
     seen: set[str] = set()
     for channel_id in NEWS_CHANNEL_IDS:
-        query = (
-            f"(site:t.me/{channel_id} OR site:t.me/s/{channel_id}) lang:ru "
-            f"(IT OR ИТ OR Казань OR Татарстан OR Иннополис OR вакансия OR "
-            f"хакатон OR стажировка OR школа)"
-        )[:400]
-        if query not in seen:
-            seen.add(query)
-            queries.append(query)
+        variants = (
+            f"url:t.me/{channel_id}/*",
+            f"url:t.me/s/{channel_id}/*",
+            f"@{channel_id} site:t.me",
+        )
+        for query in variants:
+            query = query[:400]
+            if query not in seen:
+                seen.add(query)
+                queries.append(query)
     return queries
 
 
@@ -690,7 +699,9 @@ async def fetch_yandex_vacancies(role: Optional[str] = None) -> tuple[list[dict]
 
 async def fetch_yandex_news() -> tuple[list[dict], list[str]]:
     """Search the four assigned Telegram channels via Yandex Search API."""
-    hits, errors = await _collect_hits(build_news_queries())
+    queries = build_news_queries()
+    logger.info("Yandex Search news queries=%d first=%s", len(queries), queries[0] if queries else "")
+    hits, errors = await _collect_hits(queries)
     cards = dedup_news(map_news_hits(hits))
     cards.sort(key=lambda item: item.get("dateSort", 99))
     cards = cards[:20]

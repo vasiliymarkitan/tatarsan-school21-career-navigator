@@ -306,13 +306,16 @@ def test_web_search_raises_on_http_error(monkeypatch):
 def test_build_news_queries_only_assigned_channels():
     queries = build_news_queries()
     blob = " ".join(queries).lower()
-    assert len(queries) == 4
+    assert queries
     assert all(len(query) <= 400 for query in queries)
     for channel in ("kazanit", "it_tatarstan", "innopolis_live", "school21_kazan"):
-        assert f"site:t.me/{channel}" in blob
+        assert f"url:t.me/{channel}/*" in blob
+        assert f"@{channel} site:t.me" in blob
+    assert "site:t.me/kazanit" not in blob  # path-site is a no-op in Search API
     assert "lenta.ru" not in blob
     assert "site:hh.ru" not in blob
     assert "business-gazeta" not in blob
+    assert "хакатон" not in blob  # extra AND keywords zeroed the live index
 
 
 def test_news_url_allows_only_four_channels():
@@ -359,8 +362,10 @@ def test_fetch_yandex_news_mocked_http(monkeypatch):
     assert items[0]["url"] == "https://t.me/kazanit/42"
     assert captured["url"].endswith("/v2/web/search")
     assert captured["headers"]["Authorization"] == "Api-Key test-search-key"
-    assert any("site:t.me/kazanit" in query for query in captured["queries"])
+    assert any("url:t.me/kazanit/*" in query for query in captured["queries"])
+    assert any("@kazanit site:t.me" in query for query in captured["queries"])
     assert all("site:hh.ru" not in query for query in captured["queries"])
+    assert all("site:t.me/kazanit" not in query for query in captured["queries"])
 
 
 def test_unconfigured_news_search_does_not_call_http(monkeypatch):

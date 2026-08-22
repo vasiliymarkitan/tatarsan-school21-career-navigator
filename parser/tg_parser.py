@@ -160,11 +160,18 @@ def _parse_channel(html: str, channel_handle: str) -> list[dict]:
     return posts
 
 
+def _format_exc(exc: BaseException) -> str:
+    text = str(exc).strip()
+    name = type(exc).__name__
+    return f"{name}: {text}" if text else name
+
+
 async def fetch_tg_news() -> tuple[list[dict], list[str]]:
     all_news: list[dict] = []
     errors: list[str] = []
 
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
+    # Do not follow t.me/s → t.me/<channel> (landing page, no posts).
+    async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=False) as client:
         tasks = [
             client.get(f"https://t.me/s/{channel_id}")
             for channel_id, _, _ in CHANNELS
@@ -174,7 +181,11 @@ async def fetch_tg_news() -> tuple[list[dict], list[str]]:
     for (channel_id, handle, _), resp in zip(CHANNELS, responses):
         if isinstance(resp, Exception):
             logger.warning("Telegram scrape failed for %s: %s", handle, resp)
-            errors.append(f"telegram {handle}: {resp}")
+            errors.append(f"telegram {handle}: {_format_exc(resp)}")
+            continue
+        if resp.status_code in {301, 302, 303, 307, 308}:
+            location = resp.headers.get("location") or ""
+            logger.info("Telegram %s: t.me/s preview unavailable (HTTP %s → %s)", handle, resp.status_code, location)
             continue
         if resp.status_code != 200:
             logger.warning("Telegram %s returned %d", handle, resp.status_code)
@@ -186,7 +197,7 @@ async def fetch_tg_news() -> tuple[list[dict], list[str]]:
             logger.info("Telegram %s: %d posts", handle, len(posts))
         except Exception as e:
             logger.warning("Parse error for %s: %s", handle, e)
-            errors.append(f"telegram {handle}: {e}")
+            errors.append(f"telegram {handle}: {_format_exc(e)}")
 
     all_news = dedup_news(all_news)
     all_news.sort(key=lambda x: x.get("dateSort", 99))
