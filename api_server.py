@@ -648,7 +648,7 @@ async def save_digest(settings: DigestSettingsIn, cn21_session: Optional[str] = 
         {
             "success": True,
             "settings": record,
-            "message": "Настройки сохранены. Напишите боту /start, иначе Telegram не доставит дайджест.",
+            "message": "Настройки сохранены. Дайджест будет приходить в Telegram.",
         }
     )
 
