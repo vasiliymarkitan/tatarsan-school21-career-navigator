@@ -128,7 +128,7 @@ function renderVacancies() {
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <div class="empty-title">${VACANCIES.length ? 'Ничего не найдено' : 'Живых вакансий пока нет'}</div>
-        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Выберите роль и нажмите «Найти». Ищем hh.ru и Yandex Search, фейковые карточки не подставляем.'}</div>
+        <div class="empty-sub">${VACANCIES.length ? 'Попробуй изменить фильтры' : 'Ищем junior/стажировки Казань · Татарстан · Иннополис и удалёнку РФ на hh.ru и Yandex Search. Фейковые карточки не подставляем.'}</div>
       </div>`;
   } else {
     grid.innerHTML = filtered.map(renderCard).join('');
@@ -146,13 +146,16 @@ function declVacancy(n) {
   return 'результатов';
 }
 
-function renderNews() {
+function renderNews(errors) {
   const grid = document.getElementById('newsGrid');
   if (!NEWS.length) {
+    const reason = (errors && errors.length)
+      ? errors.join('; ')
+      : 'Yandex Search и t.me/s по @kazanit, @it_tatarstan, @innopolis_live и @school21_kazan ничего не вернули. Статику не подмешиваем.';
     grid.innerHTML = `
       <article class="news-card">
-        <h3 class="news-title">Новостей из Telegram пока нет</h3>
-        <p class="news-summary">Показываем только посты с t.me/s/kazanit, it_tatarstan, innopolis_live и school21_kazan. Статику не подмешиваем.</p>
+        <h3 class="news-title">Новостей из назначенных каналов пока нет</h3>
+        <p class="news-summary">${escapeHtml(reason)}</p>
       </article>`;
     return;
   }
@@ -542,9 +545,19 @@ function _showCardsLoading() {
     <div class="empty-state">
       <div class="empty-icon" style="font-size:32px">⏳</div>
       <div class="empty-title">Загружаем вакансии…</div>
-      <div class="empty-sub">hh.ru и Yandex Search по публичным вакансиям. Telegram не нужен.</div>
+      <div class="empty-sub">hh.ru и Yandex Search по IT Казань / Татарстан. Роль не обязательна.</div>
     </div>`;
   if (countEl) countEl.textContent = 'Загружаем…';
+}
+
+function _showNewsLoading() {
+  const grid = document.getElementById('newsGrid');
+  if (!grid) return;
+  grid.innerHTML = `
+    <article class="news-card">
+      <h3 class="news-title">Загружаем IT-новости Татарстана…</h3>
+      <p class="news-summary">Yandex Search по @kazanit, @it_tatarstan, @innopolis_live и @school21_kazan.</p>
+    </article>`;
 }
 
 function mergeVacancies(incoming) {
@@ -605,19 +618,27 @@ async function loadLiveData() {
       }
     }
 
-    if (vacRes.ok) {
-      const vacData = await vacRes.json();
-      VACANCIES = vacData.vacancies || [];
-      renderVacancies();
-      initCounters();
-      _showLiveBadge(vacData.lastUpdate, VACANCIES.length, vacData.source, vacData.errors);
+    const vacData = vacRes.ok || vacRes.status === 503 ? await vacRes.json() : {};
+    VACANCIES = vacData.vacancies || [];
+    renderVacancies();
+    initCounters();
+    _showLiveBadge(vacData.lastUpdate, VACANCIES.length, vacData.source, vacData.errors);
+    if (!vacRes.ok && !VACANCIES.length) {
+      const grid = document.getElementById('cardsGrid');
+      const err = (vacData.errors && vacData.errors.length)
+        ? vacData.errors.join('; ')
+        : (vacData.error || `HTTP ${vacRes.status}`);
+      if (grid) grid.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-title">Поиск не удался</div>
+          <div class="empty-sub">${escapeHtml(err)}</div>
+        </div>`;
     }
 
-    if (newsRes.ok) {
-      const newsData = await newsRes.json();
-      NEWS = newsData.news || [];
-      renderNews();
-    }
+    const newsData = newsRes.ok || newsRes.status === 503 ? await newsRes.json() : {};
+    NEWS = newsData.news || [];
+    renderNews(newsData.errors);
   } catch (_) {
     const grid = document.getElementById('cardsGrid');
     if (grid && !VACANCIES.length) grid.innerHTML = `
@@ -732,6 +753,7 @@ async function runCareerAgent() {
 
 document.addEventListener('DOMContentLoaded', () => {
   _showCardsLoading();
+  _showNewsLoading();
   renderSources();
   initFilters();
   initSearch();

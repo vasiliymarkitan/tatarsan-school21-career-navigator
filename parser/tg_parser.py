@@ -160,8 +160,9 @@ def _parse_channel(html: str, channel_handle: str) -> list[dict]:
     return posts
 
 
-async def fetch_tg_news() -> list[dict]:
+async def fetch_tg_news() -> tuple[list[dict], list[str]]:
     all_news: list[dict] = []
+    errors: list[str] = []
 
     async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
         tasks = [
@@ -173,9 +174,11 @@ async def fetch_tg_news() -> list[dict]:
     for (channel_id, handle, _), resp in zip(CHANNELS, responses):
         if isinstance(resp, Exception):
             logger.warning("Telegram scrape failed for %s: %s", handle, resp)
+            errors.append(f"telegram {handle}: {resp}")
             continue
         if resp.status_code != 200:
             logger.warning("Telegram %s returned %d", handle, resp.status_code)
+            errors.append(f"telegram {handle}: HTTP {resp.status_code}")
             continue
         try:
             posts = _parse_channel(resp.text, handle)
@@ -183,7 +186,8 @@ async def fetch_tg_news() -> list[dict]:
             logger.info("Telegram %s: %d posts", handle, len(posts))
         except Exception as e:
             logger.warning("Parse error for %s: %s", handle, e)
+            errors.append(f"telegram {handle}: {e}")
 
     all_news = dedup_news(all_news)
     all_news.sort(key=lambda x: x.get("dateSort", 99))
-    return all_news[:20]
+    return all_news[:20], errors

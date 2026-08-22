@@ -40,7 +40,24 @@ def test_health_and_sources_are_honest(client):
     assert health["errors"] == []
 
 
-def test_vacancies_and_news_do_not_use_static_fallback(client):
+def test_vacancies_and_news_do_not_use_static_fallback(client, monkeypatch):
+    async def empty_hh(role=None):
+        return [], []
+
+    async def empty_ys(role=None):
+        return [], []
+
+    async def empty_news():
+        return [], []
+
+    async def empty_tg():
+        return [], []
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", empty_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", empty_ys)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_news", empty_news)
+    monkeypatch.setattr(api_server, "fetch_tg_news", empty_tg)
+
     vacs = client.get("/api/live-vacancies").json()
     news = client.get("/api/live-news").json()
     stats = client.get("/api/stats").json()
@@ -217,6 +234,96 @@ def test_role_search_does_not_wait_for_warm_cache(client, monkeypatch):
     second = client.get("/api/live-vacancies", params={"role": "frontend"})
     assert second.status_code == 200
     assert calls["n"] == 1
+
+
+def test_vacancies_without_role_trigger_live_search(client, monkeypatch):
+    calls = {"hh": 0, "ys": 0}
+
+    async def fake_hh(role):
+        calls["hh"] += 1
+        assert role is None
+        return [
+            {
+                "id": "hh_all",
+                "title": "Junior Python",
+                "company": "ICL",
+                "role": "backend",
+                "category": "vacancy",
+                "format": "office",
+                "url": "https://hh.ru/vacancy/1",
+                "tags": [],
+                "source": {"type": "hh", "name": "hh.ru", "url": "https://hh.ru/vacancy/1"},
+            }
+        ], []
+
+    async def fake_ys(role=None):
+        calls["ys"] += 1
+        assert role is None
+        return [], []
+
+    monkeypatch.setattr(api_server, "fetch_hh_vacancies_for_role", fake_hh)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_vacancies", fake_ys)
+    first = client.get("/api/live-vacancies")
+    assert first.status_code == 200
+    assert first.json()["vacancies"][0]["id"] == "hh_all"
+    assert first.json()["vacancies"][0]["url"] == "https://hh.ru/vacancy/1"
+    second = client.get("/api/live-vacancies")
+    assert second.status_code == 200
+    assert calls["hh"] == 1
+    assert calls["ys"] == 1
+
+
+def test_live_news_from_yandex_search(client, monkeypatch):
+    calls = {"n": 0}
+    card = {
+        "id": "ys_news_1",
+        "title": "Хакатон в Иннополисе",
+        "source": "@innopolis_live",
+        "sourceType": "telegram",
+        "url": "https://t.me/innopolis_live/10",
+        "summary": "Регистрация открыта",
+        "tags": ["хакатон"],
+        "icon": "💻",
+        "dateLabel": "из поиска",
+        "dateSort": 50,
+    }
+
+    async def fake_tg():
+        return [], []
+
+    async def fake_ys_news():
+        calls["n"] += 1
+        return [card], []
+
+    monkeypatch.setattr(api_server, "fetch_tg_news", fake_tg)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_news", fake_ys_news)
+    first = client.get("/api/live-news")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["news"][0]["url"] == "https://t.me/innopolis_live/10"
+    assert body["news"][0]["source"] == "@innopolis_live"
+    assert "KazanExpress" not in str(body)
+    assert "Digital Tatarstan 2026" not in str(body)
+    second = client.get("/api/live-news")
+    assert second.status_code == 200
+    assert calls["n"] == 1
+
+
+def test_live_news_503_when_sources_fail(client, monkeypatch):
+    async def fake_tg():
+        return [], ["telegram @kazanit: HTTP 403"]
+
+    async def fake_ys_news():
+        return [], ["Yandex Search: HTTP 403 Permission denied"]
+
+    monkeypatch.setattr(api_server, "fetch_tg_news", fake_tg)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_news", fake_ys_news)
+    response = client.get("/api/live-news")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["news"] == []
+    assert body["errors"]
+    assert any("403" in err for err in body["errors"])
 
 
 def test_no_fake_register_endpoint(client):

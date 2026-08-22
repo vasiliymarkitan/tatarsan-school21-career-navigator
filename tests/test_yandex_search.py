@@ -5,10 +5,14 @@ from unittest.mock import patch
 from parser import yandex_search
 from parser.yandex_search import (
     SearchAPIError,
+    build_news_queries,
     build_queries,
     decode_raw_data,
+    is_allowed_news_url,
     is_allowed_vacancy_url,
+    map_news_hits,
     map_search_hits,
+    news_channel_from_url,
     parse_search_xml,
 )
 
@@ -52,6 +56,43 @@ SAMPLE_XML = """<?xml version="1.0" encoding="utf-8"?>
 
 EMPTY_XML = """<?xml version="1.0" encoding="utf-8"?>
 <yandexsearch><response><error code="15">not found</error></response></yandexsearch>
+"""
+
+SAMPLE_NEWS_XML = """<?xml version="1.0" encoding="utf-8"?>
+<yandexsearch version="1.0">
+  <response>
+    <results>
+      <grouping>
+        <group>
+          <doc>
+            <url>https://t.me/kazanit/42</url>
+            <title>Хакатон в Казани: ищем разработчиков</title>
+            <headline>IT-парк, стажировки, Иннополис</headline>
+            <domain>t.me</domain>
+          </doc>
+        </group>
+        <group>
+          <doc>
+            <url>https://t.me/durov/1</url>
+            <title>Чужой канал</title>
+          </doc>
+        </group>
+        <group>
+          <doc>
+            <url>https://lenta.ru/news/it</url>
+            <title>Новость с другого сайта</title>
+          </doc>
+        </group>
+        <group>
+          <doc>
+            <url></url>
+            <title>Пост без ссылки</title>
+          </doc>
+        </group>
+      </grouping>
+    </results>
+  </response>
+</yandexsearch>
 """
 
 
@@ -260,3 +301,75 @@ def test_web_search_raises_on_http_error(monkeypatch):
     except SearchAPIError as exc:
         assert "401" in str(exc)
         assert "yc.search-api.execute" in str(exc)
+
+
+def test_build_news_queries_only_assigned_channels():
+    queries = build_news_queries()
+    blob = " ".join(queries).lower()
+    assert len(queries) == 4
+    assert all(len(query) <= 400 for query in queries)
+    for channel in ("kazanit", "it_tatarstan", "innopolis_live", "school21_kazan"):
+        assert f"site:t.me/{channel}" in blob
+    assert "lenta.ru" not in blob
+    assert "site:hh.ru" not in blob
+    assert "business-gazeta" not in blob
+
+
+def test_news_url_allows_only_four_channels():
+    assert is_allowed_news_url("https://t.me/kazanit/1")
+    assert is_allowed_news_url("https://t.me/s/it_tatarstan/2")
+    assert is_allowed_news_url("https://telegram.me/innopolis_live/3")
+    assert is_allowed_news_url("https://t.me/school21_kazan")
+    assert news_channel_from_url("https://t.me/s/kazanit/42") == "kazanit"
+    assert not is_allowed_news_url("https://t.me/durov/1")
+    assert not is_allowed_news_url("https://example.com/news")
+    assert not is_allowed_news_url("https://hh.ru/vacancy/1")
+    assert not is_allowed_news_url("")
+
+
+def test_map_news_hits_drops_other_hosts_and_does_not_invent():
+    hits, err = parse_search_xml(SAMPLE_NEWS_XML)
+    assert err is None
+    cards = map_news_hits(hits)
+    assert len(cards) == 1
+    assert cards[0]["url"] == "https://t.me/kazanit/42"
+    assert cards[0]["source"] == "@kazanit"
+    assert cards[0]["sourceType"] == "telegram"
+    assert "Contoso" not in str(cards[0])
+    assert "KazanExpress" not in str(cards[0])
+    assert cards[0]["summary"] == "IT-парк, стажировки, Иннополис"
+
+
+def test_fetch_yandex_news_mocked_http(monkeypatch):
+    monkeypatch.setenv("YANDEX_API_KEY", "test-search-key")
+    monkeypatch.setenv("YANDEX_FOLDER_ID", "b1guda0p3tk70m5m13og")
+    captured = {"queries": []}
+
+    def handler(url, headers, body):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["queries"].append(body["query"]["queryText"])
+        raw = base64.b64encode(SAMPLE_NEWS_XML.encode()).decode()
+        return _Resp(200, {"rawData": raw})
+
+    monkeypatch.setattr(yandex_search.httpx, "AsyncClient", lambda *a, **k: _FakeClient(handler))
+    items, errors = asyncio.run(yandex_search.fetch_yandex_news())
+    assert errors == []
+    assert len(items) == 1
+    assert items[0]["url"] == "https://t.me/kazanit/42"
+    assert captured["url"].endswith("/v2/web/search")
+    assert captured["headers"]["Authorization"] == "Api-Key test-search-key"
+    assert any("site:t.me/kazanit" in query for query in captured["queries"])
+    assert all("site:hh.ru" not in query for query in captured["queries"])
+
+
+def test_unconfigured_news_search_does_not_call_http(monkeypatch):
+    monkeypatch.delenv("YANDEX_API_KEY", raising=False)
+    monkeypatch.delenv("YANDEX_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("YANDEX_IAM_TOKEN", raising=False)
+    monkeypatch.delenv("YANDEX_FOLDER_ID", raising=False)
+    with patch.object(yandex_search.httpx, "AsyncClient") as client_cls:
+        items, errors = asyncio.run(yandex_search.fetch_yandex_news())
+    client_cls.assert_not_called()
+    assert items == []
+    assert "Yandex Search не настроен" in errors[0]
