@@ -309,7 +309,7 @@ def test_live_news_from_yandex_search(client, monkeypatch):
     assert calls["n"] == 1
 
 
-def test_live_news_503_when_sources_fail(client, monkeypatch):
+def test_live_news_503_when_yandex_news_fails(client, monkeypatch):
     async def fake_tg():
         return [], ["telegram @kazanit: HTTP 403"]
 
@@ -323,7 +323,60 @@ def test_live_news_503_when_sources_fail(client, monkeypatch):
     body = response.json()
     assert body["news"] == []
     assert body["errors"]
-    assert any("403" in err for err in body["errors"])
+    assert any("Yandex Search" in err and "403" in err for err in body["errors"])
+    assert not any(err.startswith("hh.ru") for err in body["errors"])
+
+
+def test_live_news_does_not_inherit_hh_or_blank_telegram(client, monkeypatch):
+    api_server._cache["source_errors"] = [
+        "hh.ru: HTTP 403 {\"errors\":[{\"type\":\"forbidden\"}]}",
+        "telegram @kazanit: ",
+    ]
+    api_server._cache["vacancy_errors"] = ["hh.ru: HTTP 403 {\"errors\":[{\"type\":\"forbidden\"}]}"]
+
+    async def fake_tg():
+        return [], ["telegram @kazanit: ", "telegram @it_tatarstan: "]
+
+    async def fake_ys_news():
+        return [], []
+
+    monkeypatch.setattr(api_server, "fetch_tg_news", fake_tg)
+    monkeypatch.setattr(api_server.yandex_search, "fetch_yandex_news", fake_ys_news)
+    response = client.get("/api/live-news")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["news"] == []
+    assert body["source"] != "error"
+    assert not any("hh.ru" in err for err in body["errors"])
+    assert not any(err.rstrip().endswith(":") for err in body["errors"])
+
+
+def test_default_vacancy_grid_prefers_tatarstan_over_moscow(client):
+    api_server._cache["vacancies"] = [
+        {
+            "id": "msk",
+            "title": "Стажёр Python",
+            "company": "X",
+            "location": "Москва",
+            "category": "internship",
+            "role": "backend",
+            "format": "office",
+            "tags": [],
+        },
+        {
+            "id": "kzn",
+            "title": "Junior Python",
+            "company": "ICL",
+            "location": "Казань",
+            "category": "vacancy",
+            "role": "backend",
+            "format": "office",
+            "tags": [],
+        },
+    ]
+    api_server._cache["last_update"] = datetime.now(timezone.utc)
+    data = client.get("/api/live-vacancies").json()
+    assert [row["id"] for row in data["vacancies"]] == ["kzn", "msk"]
 
 
 def test_no_fake_register_endpoint(client):

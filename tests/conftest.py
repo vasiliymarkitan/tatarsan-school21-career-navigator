@@ -31,6 +31,8 @@ def reset_cache(tmp_path, monkeypatch):
     _cache["last_update"] = None
     _cache["fetch_error"] = None
     _cache["source_errors"] = []
+    _cache["vacancy_errors"] = []
+    _cache["news_errors"] = []
     store = tmp_path / "digest_settings.json"
     monkeypatch.setenv("DIGEST_STORE_PATH", str(store))
     from digest import store as digest_store
